@@ -39,8 +39,9 @@ const userSchema = new Schema<IUser>(
             type: Boolean,
             default: false,
         },
-        isPermission: {
-            type: String,
+        permissions: {
+            type: [String],
+            default: [],
         },
         isVerified: {
             type: Boolean,
