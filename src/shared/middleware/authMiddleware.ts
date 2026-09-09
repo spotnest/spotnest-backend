@@ -39,6 +39,11 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
         if (user.isBlock || user.status !== UserStatus.ACTIVE) {
             return res.status(403).json({ message: 'Account is not active.' });
         }
+        const dbPermissions = Array.from(user.permissions ?? []);
+        const fallbackManagerPermissions =
+            user.role === 'admin' && dbPermissions.length === 0
+                ? [PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.CUSTOMERS_UPDATE]
+                : [];
 
         req.user = {
             id: user._id.toString(),
