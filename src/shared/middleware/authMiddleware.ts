@@ -38,7 +38,7 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
         const dbPermissions = Array.from(user.permissions ?? []);
         const fallbackManagerPermissions =
             user.role === 'admin' && dbPermissions.length === 0
-                ? [PERMISSIONS.ATTENDANCE_VIEW, PERMISSIONS.ATTENDANCE_MANAGE]
+                ? [PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.CUSTOMERS_UPDATE]
                 : [];
 
         req.user = {
