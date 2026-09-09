@@ -20,7 +20,7 @@ export interface IUser extends Document {
     image?: string;
     role: UserRole;
     isBlock: boolean;
-    permissions?: string;
+    permissions?: string[];
     isVerified: boolean;
     status: UserStatus;
     created_at: Date;
@@ -30,6 +30,10 @@ export interface IUser extends Document {
 // JWT token data
 export interface JwtPayload {
     id: string
+    userId: string;
+    email: string;
+    role: UserRole;
+    type: "access" | "refresh";
 }
 
 // response data
@@ -42,4 +46,5 @@ export interface AuthResponse {
         image?: string;
     };
     token: string;
+    refreshToken: string;
 }
