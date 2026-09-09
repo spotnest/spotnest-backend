@@ -1,14 +1,11 @@
 
-import { response } from 'express';
 import type { NextFunction, Response } from 'express';
 import type { AuthRequest } from '../../types/roleTypes.js';
 import jwt from 'jsonwebtoken';
 import User from '../../modules/auth/model.js';
 import { PERMISSIONS } from '../../constants/permissions.js';
+import type { JwtPayload } from '../../modules/auth/type.js';
 
-interface JwtPayload {
-    id: string;
-}
 
 const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<Response | void> => {
     try {
