@@ -1,16 +1,15 @@
-
-import { response } from 'express';
 import type { NextFunction, Response } from 'express';
 import type { AuthRequest } from '../../types/roleTypes.js';
 import jwt from 'jsonwebtoken';
 import User from '../../modules/auth/model.js';
-import { PERMISSIONS } from '../../constants/permissions.js';
-
-interface JwtPayload {
-    id: string;
-}
+import { UserStatus, type JwtPayload } from '../../modules/auth/type.js';
 
 const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<Response | void> => {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+        return res.status(500).json({ message: 'Server configuration error: JWT_SECRET is not set.' });
+    }
+
     try {
         let token: string | undefined;
 
@@ -27,33 +26,26 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
             return res.status(401).json({ message: 'Not authorized. No token provided.' });
         }
 
-        const secret = process.env.JWT_SECRET || 'your-secret-key';
         const decoded = jwt.verify(token, secret) as JwtPayload;
+        if (decoded.type !== 'access') {
+            return res.status(401).json({ message: 'Not authorized. Invalid token type.' });
+        }
 
-        const user = await User.findById(decoded.id);
+        const user = await User.findById(decoded.userId);
         if (!user) {
             return res.status(401).json({ message: 'Not authorized. User no longer exists.' });
         }
 
-        const dbPermissions = Array.from(user.permissions ?? []);
-        const fallbackManagerPermissions =
-            user.role === 'admin' && dbPermissions.length === 0
-                ? [PERMISSIONS.ATTENDANCE_VIEW, PERMISSIONS.ATTENDANCE_MANAGE]
-                : [];
+        if (user.isBlock || user.status !== UserStatus.ACTIVE) {
+            return res.status(403).json({ message: 'Account is not active.' });
+        }
 
         req.user = {
             id: user._id.toString(),
-            role: user.role as "employee" | "manager" | "admin",
-            email: user.email,
-            permissions: (dbPermissions.length > 0 ? dbPermissions : fallbackManagerPermissions) as any,
-        };
-        console.log('[authMiddleware Debug]', {
-            userId: user._id.toString(),
             role: user.role,
-            permissionsFromDB: dbPermissions,
-            permissionsCount: dbPermissions.length,
-            effectivePermissions: req.user.permissions,
-        });
+            email: user.email,
+            permissions: Array.from(user.permissions ?? []),
+        };
         next();
     } catch (err) {
         return res.status(401).json({ message: 'Not authorized. Invalid or expired token.' });
