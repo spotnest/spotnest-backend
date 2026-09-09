@@ -12,7 +12,6 @@ export enum UserStatus {
     SUSPENDED = "suspended",
 }
 
-
 export interface IUser extends Document {
     name: string;
     email: string;
@@ -21,9 +20,28 @@ export interface IUser extends Document {
     image?: string;
     role: UserRole;
     isBlock: boolean;
-    isPermission?: string;
+    permissions?: string;
     isVerified: boolean;
     status: UserStatus;
     created_at: Date;
     updated_at: Date;
+}
+
+// JWT token data
+export interface JwtPayload {
+    userId: string;
+    email: string;
+    role: UserRole;
+}
+
+// response data
+export interface AuthResponse {
+    user: {
+        id: string;
+        name: string;
+        email: string;
+        role: UserRole;
+        image?: string;
+    };
+    token: string;
 }
