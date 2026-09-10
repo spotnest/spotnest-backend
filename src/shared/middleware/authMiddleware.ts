@@ -4,8 +4,6 @@ import type { AuthRequest } from '../../types/roleTypes.js';
 import jwt from 'jsonwebtoken';
 import User from '../../modules/auth/model.js';
 import { PERMISSIONS } from '../../constants/permissions.js';
-import type { JwtPayload } from '../../modules/auth/type.js';
-
 import { UserStatus, type JwtPayload } from '../../modules/auth/type.js';
 
 const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<Response | void> => {
