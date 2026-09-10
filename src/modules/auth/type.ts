@@ -23,6 +23,10 @@ export interface IUser extends Document {
     permissions?: string[];
     isVerified: boolean;
     status: UserStatus;
+    otpHash?: string;
+    otpExpiry?: Date;
+    otpType?: "email_verify" | "password_reset";
+    otpAttempts?: number;
     created_at: Date;
     updated_at: Date;
 }
@@ -47,4 +51,13 @@ export interface AuthResponse {
     };
     token: string;
     refreshToken: string;
+}
+
+export interface SignupPendingResponse {
+    message: string;
+    user: {
+        id: string;
+        name: string;
+        email: string;
+    };
 }
