@@ -1,17 +1,11 @@
-
 import type { NextFunction, Response } from 'express';
 import type { AuthRequest } from '../../types/roleTypes.js';
-import jwt from 'jsonwebtoken';
 import User from '../../modules/auth/model.js';
 import { PERMISSIONS } from '../../constants/permissions.js';
-import { UserStatus, type JwtPayload } from '../../modules/auth/type.js';
+import { UserStatus } from '../../modules/auth/type.js';
+import { verifyToken } from '../utils/token.js';
 
 const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<Response | void> => {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-        return res.status(500).json({ message: 'Server configuration error: JWT_SECRET is not set.' });
-    }
-
     try {
         let token: string | undefined;
 
@@ -28,7 +22,7 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
             return res.status(401).json({ message: 'Not authorized. No token provided.' });
         }
 
-        const decoded = jwt.verify(token, secret) as JwtPayload;
+        const decoded = verifyToken(token);
         if (decoded.type !== 'access') {
             return res.status(401).json({ message: 'Not authorized. Invalid token type.' });
         }
@@ -41,11 +35,6 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
         if (user.isBlock || user.status !== UserStatus.ACTIVE) {
             return res.status(403).json({ message: 'Account is not active.' });
         }
-        const dbPermissions = Array.from(user.permissions ?? []);
-        const fallbackManagerPermissions =
-            user.role === 'admin' && dbPermissions.length === 0
-                ? [PERMISSIONS.CUSTOMERS_VIEW, PERMISSIONS.CUSTOMERS_UPDATE]
-                : [];
 
         req.user = {
             id: user._id.toString(),
