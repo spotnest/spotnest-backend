@@ -1,33 +1,12 @@
 import bcrypt from "bcryptjs";
-import { Resend } from "resend";
 import authRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
-import { UserStatus, type IUser, type JwtPayload, type AuthResponse, type SignupPendingResponse } from "./type.js";
+import { UserRole, UserStatus, type IUser, type JwtPayload, type AuthResponse, type SignupPendingResponse } from "./type.js";
 import type { LoginInput, RefreshTokenInput, SignupInput, VerifyEmailInput, ResendVerificationInput, ForgotPasswordInput, ResetPasswordInput } from "./validation.js";
 import { verifyToken, toAuthResponse } from "../../shared/utils/token.js";
 import { generateOtp, hashOtp, compareOtp } from "../../shared/utils/otp.js";
-
-
-
-const sendOtpEmail = async (
-    to: string,
-    otp: string,
-    type: "email_verify" | "password_reset"
-): Promise<void> => {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const subject = type === "email_verify" ? "Verify your SpotNest email" : "Reset your SpotNest password";
-    const expiry = process.env.OTP_EXPIRY_MINUTES ?? "10";
-    await resend.emails.send({
-        from: process.env.EMAIL_FROM || '"SpotNest" <no-reply@stitchflow.space>',
-        to,
-        subject,
-        html: `
-            <h2>Your SpotNest ${type === "email_verify" ? "Verification Code" : "Password Reset Code"}</h2>
-            <p>Your code is: <strong>${otp}</strong></p>
-            <p>This code expires in ${expiry} minutes.</p>
-        `,
-    });
-};
+import { uploadImage, deleteImage, uploadIdDocument, getSignedIdDocumentUrl } from "../../shared/utils/cloudinary.js";
+import { sendOtpEmail, sendOwnerRegistrationAlert, sendOwnerApprovedEmail, sendOwnerRejectedEmail } from "../../shared/utils/email.js";
 
 const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
     const existing = await authRepository.findByEmail(data.email);
@@ -41,6 +20,7 @@ const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
         name: data.name,
         email: data.email,
         password_hash,
+        role: data.role as UserRole,
         ...(data.phone ? { phone: data.phone } : {}),
         ...(data.image ? { image: data.image } : {}),
     });
@@ -213,6 +193,139 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
     return toAuthResponse(user);
 };
 
+// ---- Profile picture ----
+
+const uploadProfileImage = async (
+    userId: string,
+    file: { buffer: Buffer; mimetype: string }
+): Promise<{ message: string; imageUrl: string }> => {
+    const user = await authRepository.findByIdWithImagePublicId(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    const previousPublicId = user.imagePublicId;
+    const { publicId, url } = await uploadImage(file.buffer, "spotnest/profiles");
+
+    try {
+        await authRepository.updateProfileImage(userId, url, publicId);
+    } catch (err) {
+        await deleteImage(publicId).catch(() => {
+            console.error(`[CLEANUP_FAILED] orphaned Cloudinary asset publicId=${publicId}`);
+        });
+        throw new AppError(500, "Failed to save profile image");
+    }
+
+    if (previousPublicId) {
+        // Best-effort — don't fail the request if cleanup of the old image fails.
+        deleteImage(previousPublicId).catch(() => {
+            console.error(`[CLEANUP_FAILED] could not delete old asset publicId=${previousPublicId}`);
+        });
+    }
+
+    return { message: "Profile image updated successfully", imageUrl: url };
+};
+
+// ---- Owner ID verification ----
+
+const submitIdVerification = async (
+    userId: string,
+    file: { buffer: Buffer; mimetype: string }
+): Promise<{ message: string; status: string }> => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+    if (user.verificationStatus === "approved") {
+        throw new AppError(409, "Your account is already verified");
+    }
+    if (user.verificationStatus === "pending") {
+        throw new AppError(409, "A verification request is already pending review");
+    }
+
+    const { publicId } = await uploadIdDocument(file.buffer, userId);
+    await authRepository.submitVerificationDocument(userId, publicId);
+
+    // Best-effort — a failed admin-alert email should never break submission.
+    const { email, name } = user;
+    sendOwnerRegistrationAlert(email, name).catch((err) => {
+        console.error("[EMAIL_FAILED] owner registration alert:", err);
+    });
+
+    return { message: "ID submitted for review", status: "pending" };
+};
+
+const listPendingVerifications = async (): Promise<
+    { id: string; name: string; email: string; submittedAt?: Date }[]
+> => {
+    const users = await authRepository.findPendingVerifications();
+    return users.map((u) => ({
+        id: u._id.toString(),
+        name: u.name,
+        email: u.email,
+        ...(u.verificationSubmittedAt ? { submittedAt: u.verificationSubmittedAt } : {}),
+    }));
+};
+
+const getIdDocumentUrl = async (userId: string, adminId: string): Promise<{ url: string; expiresAt: Date }> => {
+    const user = await authRepository.findByIdWithIdDocument(userId);
+    if (!user || !user.idDocumentPublicId) {
+        throw new AppError(404, "No verification document found for this user");
+    }
+
+    // Minimum acceptable audit trail for something this sensitive — replace
+    // with a real audit-log table before production.
+    console.log(`[ID_DOCUMENT_ACCESS] admin=${adminId} viewed userId=${userId} at ${new Date().toISOString()}`);
+
+    return getSignedIdDocumentUrl(user.idDocumentPublicId);
+};
+
+const approveOwnerVerification = async (userId: string, adminId: string): Promise<{ message: string }> => {
+    const user = await authRepository.findById(userId);
+    if (!user || user.verificationStatus !== "pending") {
+        throw new AppError(400, "No pending verification request for this user");
+    }
+    await authRepository.approveVerification(userId, adminId);
+
+    sendOwnerApprovedEmail(user.email).catch((err) => {
+        console.error("[EMAIL_FAILED] owner approved:", err);
+    });
+
+    return { message: "Owner verification approved" };
+};
+
+const rejectOwnerVerification = async (
+    userId: string,
+    adminId: string,
+    reason: string
+): Promise<{ message: string }> => {
+    const user = await authRepository.findByIdWithIdDocument(userId);
+    if (!user || user.verificationStatus !== "pending") {
+        throw new AppError(400, "No pending verification request for this user");
+    }
+
+    const idPublicId = user.idDocumentPublicId;
+
+    // Clears idDocumentPublicId ($unset) in the same write as status: "rejected",
+    // so no signed URL can ever be minted for a deleted asset.
+    await authRepository.rejectVerification(userId, adminId, reason);
+
+    if (idPublicId) {
+        // Best-effort cleanup of the now-invalid document — a failure here leaves
+        // an orphaned private asset, never a dead link.
+        await deleteImage(idPublicId).catch((err) => {
+            console.error(`[CLEANUP_FAILED] could not delete rejected ID doc publicId=${idPublicId}`, err);
+        });
+    }
+
+    // Best-effort — don't let a flaky email provider block the rejection.
+    await sendOwnerRejectedEmail(user.email, reason).catch((err) => {
+        console.error("[EMAIL_FAILED] owner rejected:", err);
+    });
+
+    return { message: "Owner verification rejected" };
+};
+
 const authService = {
     register,
     login,
@@ -221,5 +334,11 @@ const authService = {
     forgotPassword,
     resetPassword,
     refresh,
+    uploadProfileImage,
+    submitIdVerification,
+    listPendingVerifications,
+    getIdDocumentUrl,
+    approveOwnerVerification,
+    rejectOwnerVerification,
 };
 export default authService;
