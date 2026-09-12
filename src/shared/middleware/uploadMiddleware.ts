@@ -18,6 +18,24 @@ const createFileUpload = (
     }).single(fieldName);
 };
 
+const createMultiFileUpload = (
+    fieldName: string,
+    allowedMimeTypes: string[],
+    maxCount: number,
+    maxSizeBytes = 5 * 1024 * 1024
+) => {
+    return multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: maxSizeBytes, files: maxCount },
+        fileFilter: (_req, file, cb) => {
+            if (!allowedMimeTypes.includes(file.mimetype)) {
+                return cb(new AppError(400, `Only ${allowedMimeTypes.join(", ")} files are allowed`));
+            }
+            cb(null, true);
+        },
+    }).array(fieldName, maxCount);
+};
+
 export const profileImageUpload = createFileUpload("image", [
     "image/jpeg",
     "image/png",
@@ -29,3 +47,9 @@ export const idDocumentUpload = createFileUpload("idDocument", [
     "image/png",
     "application/pdf",
 ]);
+
+export const propertyImagesUpload = createMultiFileUpload(
+    "images",
+    ["image/jpeg", "image/png", "image/webp"],
+    8
+);
