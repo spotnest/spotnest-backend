@@ -53,6 +53,24 @@ const userSchema = new Schema<IUser>(
             required: true,
             default: UserStatus.ACTIVE,
         },
+        otpHash: {
+            type: String,
+            select: false,
+        },
+        otpExpiry: {
+            type: Date,
+            select: false,
+        },
+        otpType: {
+            type: String,
+            enum: ["email_verify", "password_reset"],
+            select: false,
+        },
+        otpAttempts: {
+            type: Number,
+            default: 0,
+            select: false,
+        },
     },
     {
         timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
