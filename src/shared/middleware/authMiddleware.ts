@@ -41,6 +41,7 @@ const protect = async (req: AuthRequest, res: Response, next: NextFunction): Pro
             role: user.role,
             email: user.email,
             permissions: Array.from(user.permissions ?? []),
+            ...(user.verificationStatus ? { verificationStatus: user.verificationStatus } : {}),
         };
         next();
     } catch (err) {

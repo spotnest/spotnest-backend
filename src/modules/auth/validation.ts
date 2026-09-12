@@ -6,6 +6,8 @@ export const signupSchema = z.object({
     phone: z.string().min(10).max(20).optional(),
     password: z.string().min(6, "Password must be at least 6 characters").max(255),
     image: z.string().url("Invalid image URL").optional(),
+    // NEW — "admin" is never client-requestable
+    role: z.enum(["user", "owner"]).default("user"),
 });
 
 export const loginSchema = z.object({
@@ -35,6 +37,11 @@ export const resetPasswordSchema = z.object({
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
     newPassword: z.string().min(6, "Password must be at least 6 characters").max(255),
 });
+
+export const rejectVerificationSchema = z.object({
+    reason: z.string().min(1, "Rejection reason is required").max(500),
+});
+export type RejectVerificationInput = z.infer<typeof rejectVerificationSchema>
 
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
