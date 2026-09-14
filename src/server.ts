@@ -1,5 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import "./shared/config/env.js";
 
 import connectDb from './shared/config/db.js';
 import app from './app.js';

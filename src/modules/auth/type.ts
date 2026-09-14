@@ -18,6 +18,16 @@ export interface IUser extends Document {
     phone?: string;
     password_hash: string;
     image?: string;
+    // Profile picture
+    imagePublicId?: string; // Cloudinary public_id for the current profile image, needed to delete it on replacement — select: false
+
+    // Owner ID verification
+    verificationStatus?: "unsubmitted" | "pending" | "approved" | "rejected";
+    idDocumentPublicId?: string;       // sensitive — select: false
+    rejectionReason?: string;
+    verificationSubmittedAt?: Date;
+    verificationReviewedAt?: Date;
+    verificationReviewedBy?: string;   // admin's user id
     role: UserRole;
     isBlock: boolean;
     permissions?: string[];

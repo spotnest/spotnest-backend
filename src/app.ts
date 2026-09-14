@@ -1,5 +1,8 @@
-import dotenv from "dotenv";
-dotenv.config();
+// Imported FIRST — its dotenv.config() must run before any transitively
+// imported module (email.ts, cloudinary.ts, ...) reads process.env at
+// module-eval time. Covers every entry that imports app directly, not just
+// server.ts.
+import "./shared/config/env.js";
 
 import express from "express";
 import cors from "cors";
