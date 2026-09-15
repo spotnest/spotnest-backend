@@ -1,5 +1,5 @@
 import type { NextFunction, Response } from "express";
-import type { AuthRequest } from "../../types/roleTypes.js";
+import type { AuthRequest } from "../../../types/roleTypes.js";
 import dashboardService from "./services.js";
 
 const getAdminDashboard = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
