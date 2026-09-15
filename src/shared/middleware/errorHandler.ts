@@ -1,10 +1,19 @@
 import type { NextFunction, Request, Response } from "express";
+import multer from "multer";
 import { ZodError } from "zod";
 import { AppError } from "../errors/AppError.js";
 
 const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunction): void => {
     if (err instanceof AppError) {
         res.status(err.statusCode).json({
+            success: false,
+            message: err.message,
+        });
+        return;
+    }
+
+    if (err instanceof multer.MulterError) {
+        res.status(400).json({
             success: false,
             message: err.message,
         });

@@ -6,5 +6,6 @@ export interface AuthRequest extends Request {
         role: 'user' | 'admin' | 'owner';
         email: string;
         permissions: string[];
+        verificationStatus?: 'unsubmitted' | 'pending' | 'approved' | 'rejected';
     };
 }
