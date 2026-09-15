@@ -46,10 +46,16 @@ const toAuthResponse = (user: IUser): AuthResponse => {
             name: user.name,
             email: user.email,
             role: user.role,
-            ...(user.image ? { image: user.image } : {}),
+            ...(user.image
+                ? { image: user.image }
+                : {}),
         },
-        token: signAccessToken(buildTokenPayload(user, "access")),
-        refreshToken: signRefreshToken(buildTokenPayload(user, "refresh")),
+        token: signAccessToken(
+            buildTokenPayload(user, "access")
+        ),
+        refreshToken: signRefreshToken(
+            buildTokenPayload(user, "refresh")
+        ),
     };
 };
 

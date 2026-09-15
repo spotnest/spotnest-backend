@@ -1,5 +1,5 @@
 import User from "./model.js";
-import type { IUser, UserRole } from "./type.js";
+import type { IUser } from "./type.js";
 
 export interface CreateUserInput {
     name: string;
@@ -7,7 +7,6 @@ export interface CreateUserInput {
     phone?: string;
     password_hash: string;
     image?: string;
-    role?: UserRole; // NEW
 }
 
 const createUser = async (data: CreateUserInput): Promise<IUser> => {
@@ -65,59 +64,6 @@ const markVerified = async (userId: string): Promise<void> => {
     await User.findByIdAndUpdate(userId, { isVerified: true });
 };
 
-// Profile picture
-const findByIdWithImagePublicId = async (userId: string): Promise<IUser | null> => {
-    return User.findById(userId).select("+imagePublicId");
-};
-
-const updateProfileImage = async (userId: string, imageUrl: string, imagePublicId: string): Promise<void> => {
-    await User.findByIdAndUpdate(userId, { image: imageUrl, imagePublicId });
-};
-
-// Owner ID verification
-const submitVerificationDocument = async (userId: string, publicId: string): Promise<void> => {
-    await User.findByIdAndUpdate(userId, {
-        $set: {
-            idDocumentPublicId: publicId,
-            verificationStatus: "pending",
-            verificationSubmittedAt: new Date(),
-        },
-        $unset: {
-            rejectionReason: 1,
-            verificationReviewedAt: 1,
-            verificationReviewedBy: 1,
-        },
-    });
-};
-
-const findPendingVerifications = async (): Promise<IUser[]> => {
-    return User.find({ verificationStatus: "pending" }).select("name email verificationSubmittedAt");
-};
-
-const findByIdWithIdDocument = async (userId: string): Promise<IUser | null> => {
-    return User.findById(userId).select("+idDocumentPublicId");
-};
-
-const approveVerification = async (userId: string, adminId: string): Promise<void> => {
-    await User.findByIdAndUpdate(userId, {
-        verificationStatus: "approved",
-        verificationReviewedAt: new Date(),
-        verificationReviewedBy: adminId,
-    });
-};
-
-const rejectVerification = async (userId: string, adminId: string, reason: string): Promise<void> => {
-    await User.findByIdAndUpdate(userId, {
-        $set: {
-            verificationStatus: "rejected",
-            rejectionReason: reason,
-            verificationReviewedAt: new Date(),
-            verificationReviewedBy: adminId,
-        },
-        $unset: { idDocumentPublicId: 1 },
-    });
-};
-
 const authRepository = {
     createUser,
     findByEmail,
@@ -128,12 +74,5 @@ const authRepository = {
     clearOtp,
     updatePassword,
     markVerified,
-    findByIdWithImagePublicId,
-    updateProfileImage,
-    submitVerificationDocument,
-    findPendingVerifications,
-    findByIdWithIdDocument,
-    approveVerification,
-    rejectVerification,
 };
 export default authRepository;
