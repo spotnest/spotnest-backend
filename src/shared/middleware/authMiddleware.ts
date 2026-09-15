@@ -1,51 +1,118 @@
-import type { NextFunction, Response } from 'express';
-import type { AuthRequest } from '../../types/roleTypes.js';
-import User from '../../modules/auth/model.js';
-import { PERMISSIONS } from '../../constants/permissions.js';
-import { UserStatus } from '../../modules/auth/type.js';
-import { verifyToken } from '../utils/token.js';
+import type {
+    NextFunction,
+    Response,
+} from "express";
 
-const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<Response | void> => {
+import type { AuthRequest } from "../../types/roleTypes.js";
+
+import User from "../../modules/auth/model.js";
+
+import { UserStatus } from "../../modules/auth/type.js";
+
+import { verifyToken } from "../utils/token.js";
+
+const protect = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+): Promise<Response | void> => {
     try {
         let token: string | undefined;
 
-        const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            token = authHeader.split(' ')[1];
-        } else if (req.cookies?.token) {
-            token = req.cookies.token;
-        } else if (req.cookies?.jwt) {
-            token = req.cookies.jwt;
+        /**
+         * Primary authentication method:
+         * HttpOnly accessToken cookie.
+         */
+        if (req.cookies?.accessToken) {
+            token = req.cookies.accessToken;
+        }
+
+        /**
+         * Optional backward compatibility:
+         * Allows Bearer tokens during the migration.
+         *
+         * Once every frontend request uses cookies,
+         * this fallback can be removed.
+         */
+        if (!token) {
+            const authHeader =
+                req.headers.authorization;
+
+            if (
+                authHeader &&
+                authHeader.startsWith("Bearer ")
+            ) {
+                token = authHeader.substring(7);
+            }
         }
 
         if (!token) {
-            return res.status(401).json({ message: 'Not authorized. No token provided.' });
+            return res.status(401).json({
+                success: false,
+                message:
+                    "Not authorized. No access token provided.",
+            });
         }
 
         const decoded = verifyToken(token);
-        if (decoded.type !== 'access') {
-            return res.status(401).json({ message: 'Not authorized. Invalid token type.' });
+
+        if (decoded.type !== "access") {
+            return res.status(401).json({
+                success: false,
+                message:
+                    "Not authorized. Invalid token type.",
+            });
         }
 
-        const user = await User.findById(decoded.userId);
+        const user = await User.findById(
+            decoded.userId
+        );
+
         if (!user) {
-            return res.status(401).json({ message: 'Not authorized. User no longer exists.' });
+            return res.status(401).json({
+                success: false,
+                message:
+                    "Not authorized. User no longer exists.",
+            });
         }
 
-        if (user.isBlock || user.status !== UserStatus.ACTIVE) {
-            return res.status(403).json({ message: 'Account is not active.' });
+        if (
+            user.isBlock ||
+            user.status !== UserStatus.ACTIVE
+        ) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Account is not active.",
+            });
         }
 
         req.user = {
             id: user._id.toString(),
+            name: user.name,
             role: user.role,
             email: user.email,
-            permissions: Array.from(user.permissions ?? []),
-            ...(user.verificationStatus ? { verificationStatus: user.verificationStatus } : {}),
+            permissions: Array.from(
+                user.permissions ?? []
+            ),
+            isVerified: user.isVerified,
+            isBlock: user.isBlock,
+            ...(user.image ? { image: user.image } : {}),
+            ...(user.verificationStatus
+                ? {
+                      verificationStatus:
+                          user.verificationStatus,
+                  }
+                : {}),
         };
+
         next();
-    } catch (err) {
-        return res.status(401).json({ message: 'Not authorized. Invalid or expired token.' });
+    } catch {
+        return res.status(401).json({
+            success: false,
+            message:
+                "Not authorized. Invalid or expired access token.",
+        });
     }
 };
 
