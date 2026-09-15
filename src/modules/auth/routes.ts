@@ -4,15 +4,26 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import protect from "../../shared/middleware/authMiddleware.js";
 import { requireRole } from "../../shared/middleware/roleMiddleware.js";
-import { profileImageUpload, idDocumentUpload } from "../../shared/middleware/uploadMiddleware.js";
+import {
+    profileImageUpload,
+    idDocumentUpload,
+} from "../../shared/middleware/uploadMiddleware.js";
+
 import { UserRole } from "./type.js";
 import authController from "./controller.js";
+
 import {
     googleAuth,
     googleCallback,
 } from "./oauth/google.js";
 
 const router = Router();
+
+/**
+ * =========================
+ * PUBLIC AUTH ROUTES
+ * =========================
+ */
 
 router.post(
     "/signup",
@@ -49,9 +60,17 @@ router.post(
     authController.resetPassword
 );
 
+router.post(
+    "/logout",
+    authController.logout
+);
+
 /**
- * Get current authenticated user
+ * =========================
+ * CURRENT USER
+ * =========================
  */
+
 router.get(
     "/me",
     protect,
@@ -64,8 +83,11 @@ router.get(
 );
 
 /**
- * Google OAuth
+ * =========================
+ * GOOGLE OAUTH
+ * =========================
  */
+
 router.get(
     "/google",
     googleAuth
@@ -76,18 +98,65 @@ router.get(
     googleCallback
 );
 
-// Profile picture — any authenticated user, own account only
-router.patch("/me/image", protect, profileImageUpload, authController.uploadProfileImage);
+/**
+ * =========================
+ * PROFILE IMAGE
+ * =========================
+ */
 
-// Owner ID verification
-router.post("/owner/verification", protect, requireRole(UserRole.OWNER), idDocumentUpload, authController.uploadIdVerification);
+router.patch(
+    "/me/image",
+    protect,
+    profileImageUpload,
+    authController.uploadProfileImage
+);
 
-// Admin review
-router.get("/admin/verifications", protect, requireRole(UserRole.ADMIN), authController.listPendingVerifications);
-router.get("/admin/verifications/:userId/id-image", protect, requireRole(UserRole.ADMIN), authController.getIdDocumentUrl);
-router.patch("/admin/verifications/:userId/approve", protect, requireRole(UserRole.ADMIN), authController.approveVerification);
-router.patch("/admin/verifications/:userId/reject", protect, requireRole(UserRole.ADMIN), authController.rejectVerification);
+/**
+ * =========================
+ * OWNER ID VERIFICATION
+ * =========================
+ */
 
-const authRoutes = router;
+router.post(
+    "/owner/verification",
+    protect,
+    requireRole(UserRole.OWNER),
+    idDocumentUpload,
+    authController.uploadIdVerification
+);
 
-export default authRoutes;
+/**
+ * =========================
+ * ADMIN VERIFICATION
+ * =========================
+ */
+
+router.get(
+    "/admin/verifications",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.listPendingVerifications
+);
+
+router.get(
+    "/admin/verifications/:userId/id-image",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.getIdDocumentUrl
+);
+
+router.patch(
+    "/admin/verifications/:userId/approve",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.approveVerification
+);
+
+router.patch(
+    "/admin/verifications/:userId/reject",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.rejectVerification
+);
+
+export default router;
