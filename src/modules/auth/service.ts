@@ -3,10 +3,23 @@ import authRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import { UserRole, UserStatus, type IUser, type JwtPayload, type AuthResponse, type SignupPendingResponse } from "./type.js";
 import type { LoginInput, RefreshTokenInput, SignupInput, VerifyEmailInput, ResendVerificationInput, ForgotPasswordInput, ResetPasswordInput } from "./validation.js";
-import { verifyToken, toAuthResponse } from "../../shared/utils/token.js";
+import { verifyToken, toAuthResponse, hashToken } from "../../shared/utils/token.js";
 import { generateOtp, hashOtp, compareOtp } from "../../shared/utils/otp.js";
 import { uploadImage, deleteImage, uploadIdDocument, getSignedIdDocumentUrl } from "../../shared/utils/cloudinary.js";
 import { sendOtpEmail, sendOwnerRegistrationAlert, sendOwnerApprovedEmail, sendOwnerRejectedEmail } from "../../shared/utils/email.js";
+
+const createSessionForRefreshToken = async (
+    userId: string,
+    refreshToken: string
+): Promise<void> => {
+    const decoded = verifyToken(refreshToken);
+    const tokenHash = hashToken(refreshToken);
+    const expiresAt = decoded.exp
+        ? new Date(decoded.exp * 1000)
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await authRepository.createSession(userId, tokenHash, expiresAt);
+};
 
 const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
     const existing = await authRepository.findByEmail(data.email);
@@ -57,7 +70,10 @@ const login = async (data: LoginInput): Promise<AuthResponse> => {
         throw new AppError(403, "Please verify your email before logging in");
     }
 
-    return toAuthResponse(user);
+    const authResponse = toAuthResponse(user);
+    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
+
+    return authResponse;
 };
 
 const verifyEmail = async (data: VerifyEmailInput): Promise<AuthResponse> => {
@@ -86,7 +102,10 @@ const verifyEmail = async (data: VerifyEmailInput): Promise<AuthResponse> => {
     await authRepository.markVerified(user._id.toString());
     await authRepository.clearOtp(user._id.toString());
 
-    return toAuthResponse(user);
+    const authResponse = toAuthResponse(user);
+    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
+
+    return authResponse;
 };
 
 const resendVerification = async (data: ResendVerificationInput): Promise<{ message: string }> => {
@@ -181,6 +200,13 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
         throw new AppError(401, "Invalid or expired refresh token");
     }
 
+    const tokenHash = hashToken(data.refreshToken);
+    const activeSession = await authRepository.findActiveSession(decoded.userId, tokenHash);
+
+    if (!activeSession) {
+        throw new AppError(401, "Invalid or expired refresh token");
+    }
+
     const user = await authRepository.findById(decoded.userId);
     if (!user) {
         throw new AppError(401, "User no longer exists");
@@ -190,7 +216,26 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
         throw new AppError(403, "Account is not active");
     }
 
-    return toAuthResponse(user);
+    // Token Rotation: revoke old session and issue new token + session
+    await authRepository.revokeSessionByHash(tokenHash);
+
+    const authResponse = toAuthResponse(user);
+    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
+
+    return authResponse;
+};
+
+const logout = async (refreshToken?: string): Promise<{ message: string }> => {
+    if (refreshToken) {
+        try {
+            const tokenHash = hashToken(refreshToken);
+            await authRepository.revokeSessionByHash(tokenHash);
+        } catch {
+            // Best-effort revocation on logout
+        }
+    }
+
+    return { message: "Logged out successfully" };
 };
 
 // ---- Profile picture ----
@@ -334,6 +379,7 @@ const authService = {
     forgotPassword,
     resetPassword,
     refresh,
+    logout,
     uploadProfileImage,
     submitIdVerification,
     listPendingVerifications,

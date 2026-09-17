@@ -10,6 +10,8 @@ import {
     buildTokenPayload,
     signAccessToken,
     signRefreshToken,
+    hashToken,
+    verifyToken,
 } from "../../../shared/utils/token.js";
 import { setAuthCookies } from "../controller.js";
 import { AppError } from "../../../shared/errors/AppError.js";
@@ -246,6 +248,18 @@ const googleCallback = async (
 
         const refreshToken = signRefreshToken(
             buildTokenPayload(user, "refresh")
+        );
+
+        const tokenHash = hashToken(refreshToken);
+        const decoded = verifyToken(refreshToken);
+        const expiresAt = decoded.exp
+            ? new Date(decoded.exp * 1000)
+            : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+        await authRepository.createSession(
+            user._id.toString(),
+            tokenHash,
+            expiresAt
         );
 
         const authResponse = {

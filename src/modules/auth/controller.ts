@@ -227,11 +227,13 @@ const resetPassword = async (
 };
 
 const logout = async (
-    _req: Request,
+    req: Request,
     res: Response,
     next: NextFunction
 ): Promise<void> => {
     try {
+        const refreshToken = req.cookies?.refreshToken;
+        await authService.logout(refreshToken);
         clearAuthCookies(res);
 
         res.status(200).json({

@@ -1,4 +1,5 @@
 import User from "./model.js";
+import Session, { type ISession } from "./sessionModel.js";
 import type { IUser, UserRole } from "./type.js";
 
 export interface CreateUserInput {
@@ -118,6 +119,45 @@ const rejectVerification = async (userId: string, adminId: string, reason: strin
     });
 };
 
+// Refresh token session management
+const createSession = async (
+    userId: string,
+    tokenHash: string,
+    expiresAt: Date
+): Promise<ISession> => {
+    return Session.create({
+        userId,
+        tokenHash,
+        expiresAt,
+    });
+};
+
+const findActiveSession = async (
+    userId: string,
+    tokenHash: string
+): Promise<ISession | null> => {
+    return Session.findOne({
+        userId,
+        tokenHash,
+        revokedAt: { $exists: false },
+        expiresAt: { $gt: new Date() },
+    });
+};
+
+const revokeSessionByHash = async (tokenHash: string): Promise<void> => {
+    await Session.updateOne(
+        { tokenHash, revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date() } }
+    );
+};
+
+const revokeAllUserSessions = async (userId: string): Promise<void> => {
+    await Session.updateMany(
+        { userId, revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date() } }
+    );
+};
+
 const authRepository = {
     createUser,
     findByEmail,
@@ -135,5 +175,9 @@ const authRepository = {
     findByIdWithIdDocument,
     approveVerification,
     rejectVerification,
+    createSession,
+    findActiveSession,
+    revokeSessionByHash,
+    revokeAllUserSessions,
 };
 export default authRepository;
