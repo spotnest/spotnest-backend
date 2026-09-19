@@ -106,7 +106,9 @@ const submitVerificationDocument = async (userId: string, publicId: string): Pro
 };
 
 const findPendingVerifications = async (): Promise<IUser[]> => {
-    return User.find({ role: UserRole.OWNER, verificationStatus: "pending" }).select("name email verificationSubmittedAt");
+    return User.find({ role: UserRole.OWNER, verificationStatus: "pending", isVerified: false })
+        .select("name email phone status isVerified verificationStatus created_at verificationSubmittedAt")
+        .sort({ created_at: -1 });
 };
 
 const findByIdWithIdDocument = async (userId: string): Promise<IUser | null> => {

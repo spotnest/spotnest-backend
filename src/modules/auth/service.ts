@@ -306,14 +306,19 @@ const submitIdVerification = async (
 };
 
 const listPendingVerifications = async (): Promise<
-    { id: string; name: string; email: string; submittedAt?: Date }[]
+    { id: string; name: string; email: string; phone?: string; status: string; isVerified: boolean; verificationStatus?: string; createdAt: string; submittedAt?: string }[]
 > => {
     const users = await authRepository.findPendingVerifications();
     return users.map((u) => ({
         id: u._id.toString(),
         name: u.name,
         email: u.email,
-        ...(u.verificationSubmittedAt ? { submittedAt: u.verificationSubmittedAt } : {}),
+        ...(u.phone ? { phone: u.phone } : {}),
+        status: u.status,
+        isVerified: u.isVerified,
+        ...(u.verificationStatus ? { verificationStatus: u.verificationStatus } : {}),
+        createdAt: u.created_at.toISOString(),
+        ...(u.verificationSubmittedAt ? { submittedAt: u.verificationSubmittedAt.toISOString() } : {}),
     }));
 };
 
