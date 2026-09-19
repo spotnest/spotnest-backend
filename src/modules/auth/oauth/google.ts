@@ -11,6 +11,7 @@ import {
     signAccessToken,
     signRefreshToken,
 } from "../../../shared/utils/token.js";
+import { setAuthCookies } from "../controller.js";
 import { AppError } from "../../../shared/errors/AppError.js";
 
 const getGoogleOAuthEnv = (): {
@@ -189,9 +190,21 @@ const googleCallback = async (
                 );
             }
 
+            let shouldSave = false;
+
             // Update Google profile image if available.
             if (image && !user.image) {
                 user.image = image;
+                shouldSave = true;
+            }
+
+            // Google OAuth confirms email ownership
+            if (!user.isVerified) {
+                user.isVerified = true;
+                shouldSave = true;
+            }
+
+            if (shouldSave) {
                 await user.save();
             }
         } else {
@@ -250,6 +263,11 @@ const googleCallback = async (
         };
 
         /**
+         * Set HttpOnly authentication cookies.
+         */
+        setAuthCookies(res, accessToken, refreshToken);
+
+        /**
          * Optional JSON response.
          *
          * Useful for testing.
@@ -268,29 +286,24 @@ const googleCallback = async (
 
         /**
          * Redirect back to frontend.
+         * The browser automatically stores the HttpOnly cookies set above.
+         * JWT tokens and user data are NOT appended to URL query parameters.
          */
         const clientUrl = getClientUrl();
-
-   const targetUrl = new URL("/oauth/callback", clientUrl);
-
-        targetUrl.searchParams.set(
-            "token",
-            authResponse.token
-        );
-
-        targetUrl.searchParams.set(
-            "refreshToken",
-            authResponse.refreshToken
-        );
-
-        targetUrl.searchParams.set(
-            "user",
-            JSON.stringify(authResponse.user)
-        );
+        const targetUrl = new URL("/oauth/callback", clientUrl);
 
         res.redirect(targetUrl.toString());
     } catch (err) {
-        next(err);
+        const clientUrl = getClientUrl();
+        const errorMessage =
+            err instanceof AppError
+                ? err.message
+                : "Google authentication failed. Please try again.";
+
+        const errorUrl = new URL("/login", clientUrl);
+        errorUrl.searchParams.set("error", errorMessage);
+
+        res.redirect(errorUrl.toString());
     }
 };
 

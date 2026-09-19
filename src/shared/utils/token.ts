@@ -1,23 +1,44 @@
 import jwt from "jsonwebtoken";
-import type { IUser, JwtPayload, AuthResponse } from "../../modules/auth/type.js";
+import type {
+    IUser,
+    JwtPayload,
+    AuthResponse,
+} from "../../modules/auth/type.js";
 
 const getSecret = (): string => {
     const secret = process.env.JWT_SECRET;
+
     if (!secret) {
-        throw new Error("JWT_SECRET is not defined in environment variables");
+        throw new Error(
+            "JWT_SECRET is not defined in environment variables"
+        );
     }
+
     return secret;
 };
 
-const parseExpiry = (value: string | undefined, fallback: string): Exclude<jwt.SignOptions["expiresIn"], undefined> => {
+const parseExpiry = (
+    value: string | undefined,
+    fallback: string
+): Exclude<jwt.SignOptions["expiresIn"], undefined> => {
     const input = value || fallback;
+
     if (!/^\d+(ms|s|m|h|d|w|y)$/.test(input)) {
-        throw new Error(`Invalid JWT expiry duration: "${input}"`);
+        throw new Error(
+            `Invalid JWT expiry duration: "${input}"`
+        );
     }
-    return input as Exclude<jwt.SignOptions["expiresIn"], undefined>;
+
+    return input as Exclude<
+        jwt.SignOptions["expiresIn"],
+        undefined
+    >;
 };
 
-const buildTokenPayload = (user: IUser, type: "access" | "refresh"): JwtPayload => ({
+const buildTokenPayload = (
+    user: IUser,
+    type: "access" | "refresh"
+): JwtPayload => ({
     id: user._id.toString(),
     userId: user._id.toString(),
     email: user.email,
@@ -26,13 +47,25 @@ const buildTokenPayload = (user: IUser, type: "access" | "refresh"): JwtPayload 
 });
 
 const signAccessToken = (payload: JwtPayload): string => {
-    const expiresIn = parseExpiry(process.env.JWT_EXPIRES_IN, "15m");
-    return jwt.sign(payload, getSecret(), { expiresIn });
+    const expiresIn = parseExpiry(
+        process.env.JWT_EXPIRES_IN,
+        "15m"
+    );
+
+    return jwt.sign(payload, getSecret(), {
+        expiresIn,
+    });
 };
 
 const signRefreshToken = (payload: JwtPayload): string => {
-    const expiresIn = parseExpiry(process.env.JWT_REFRESH_EXPIRES_IN, "7d");
-    return jwt.sign(payload, getSecret(), { expiresIn });
+    const expiresIn = parseExpiry(
+        process.env.JWT_REFRESH_EXPIRES_IN,
+        "7d"
+    );
+
+    return jwt.sign(payload, getSecret(), {
+        expiresIn,
+    });
 };
 
 const verifyToken = (token: string): JwtPayload => {
@@ -40,6 +73,16 @@ const verifyToken = (token: string): JwtPayload => {
 };
 
 const toAuthResponse = (user: IUser): AuthResponse => {
+    const accessPayload = buildTokenPayload(
+        user,
+        "access"
+    );
+
+    const refreshPayload = buildTokenPayload(
+        user,
+        "refresh"
+    );
+
     return {
         user: {
             id: user._id.toString(),
@@ -50,13 +93,19 @@ const toAuthResponse = (user: IUser): AuthResponse => {
                 ? { image: user.image }
                 : {}),
         },
-        token: signAccessToken(
-            buildTokenPayload(user, "access")
-        ),
-        refreshToken: signRefreshToken(
-            buildTokenPayload(user, "refresh")
-        ),
+
+        token: signAccessToken(accessPayload),
+
+        refreshToken: signRefreshToken(refreshPayload),
     };
 };
 
-export { getSecret, parseExpiry, buildTokenPayload, signAccessToken, signRefreshToken, verifyToken, toAuthResponse };
+export {
+    getSecret,
+    parseExpiry,
+    buildTokenPayload,
+    signAccessToken,
+    signRefreshToken,
+    verifyToken,
+    toAuthResponse,
+};

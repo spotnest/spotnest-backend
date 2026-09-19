@@ -29,6 +29,18 @@ const userSchema = new Schema<IUser>(
             type: String,
             default: "",
         },
+        imagePublicId: { type: String, select: false },
+
+        verificationStatus: {
+            type: String,
+            enum: ["unsubmitted", "pending", "approved", "rejected"],
+            default: "unsubmitted",
+        },
+        idDocumentPublicId: { type: String, select: false }, // only field here that's genuinely sensitive
+        rejectionReason: { type: String },
+        verificationSubmittedAt: { type: Date },
+        verificationReviewedAt: { type: Date },
+        verificationReviewedBy: { type: String },
         role: {
             type: String,
             enum: Object.values(UserRole),
