@@ -137,3 +137,12 @@ export const listAllForAdmin = async (req: AuthRequest, res: Response, next: Nex
         next(err);
     }
 };
+
+export const getAdminProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const property = await propertyService.getAdminPropertyById(req.params.id as string);
+        res.status(200).json(property);
+    } catch (err) {
+        next(err);
+    }
+};
