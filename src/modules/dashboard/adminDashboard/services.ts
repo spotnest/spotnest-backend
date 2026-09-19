@@ -2,9 +2,10 @@ import dashboardRepository from "./repository.js";
 import type { AdminDashboardResponse, DashboardActivity } from "./type.js";
 
 const getAdminDashboard = async (): Promise<AdminDashboardResponse> => {
-    const [overview, recentUsers] = await Promise.all([
+    const [overview, recentUsers, recentProperties] = await Promise.all([
         dashboardRepository.getOverview(),
         dashboardRepository.findRecentUsers(3),
+        dashboardRepository.findRecentProperties(5),
     ]);
 
     const recentActivities: DashboardActivity[] = recentUsers.map((user) => ({
@@ -20,7 +21,7 @@ const getAdminDashboard = async (): Promise<AdminDashboardResponse> => {
         overview,
         recentActivities,
         recentUsers,
-        recentProperties: [],
+        recentProperties,
     };
 };
 

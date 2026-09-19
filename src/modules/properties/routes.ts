@@ -7,6 +7,10 @@ import * as propertyController from "./controller.js";
 
 const router = Router();
 
+// Admin management views must be declared before the public /:id route.
+router.get("/admin/all", protect, requireRole(UserRole.ADMIN), propertyController.listAllForAdmin);
+router.get("/admin/:id", protect, requireRole(UserRole.ADMIN), propertyController.getAdminProperty);
+
 // Public
 router.get("/", propertyController.listProperties);
 router.get("/:id", propertyController.getProperty);
@@ -28,8 +32,5 @@ router.post(
 );
 router.delete("/:id/images", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.removeImage);
 router.delete("/:id", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.archiveProperty);
-
-// Admin moderation
-router.get("/admin/all", protect, requireRole(UserRole.ADMIN), propertyController.listAllForAdmin);
 
 export default router;

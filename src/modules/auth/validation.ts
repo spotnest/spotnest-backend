@@ -38,6 +38,20 @@ export const resetPasswordSchema = z.object({
     newPassword: z.string().min(6, "Password must be at least 6 characters").max(255),
 });
 
+export const updateProfileSchema = z.object({
+    name: z.string().min(2).max(100).optional(),
+    phone: z.string().min(10).max(20).or(z.literal("")).optional(),
+});
+
+export const changePasswordSchema = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(6).max(255),
+    confirmPassword: z.string().min(6).max(255),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+});
+
 export const rejectVerificationSchema = z.object({
     reason: z.string().min(1, "Rejection reason is required").max(500),
 });
@@ -50,3 +64,5 @@ export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

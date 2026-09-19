@@ -4,6 +4,7 @@ export interface DashboardOverview {
     totalProperties: number;
     activeListings: number;
     pendingRequests: number;
+    pendingOwnerCount: number;
     pendingUserVerification: number;
 }
 

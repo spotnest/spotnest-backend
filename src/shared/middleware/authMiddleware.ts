@@ -7,9 +7,10 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import User from "../../modules/auth/model.js";
 
-import { UserStatus } from "../../modules/auth/type.js";
+import { UserRole, UserStatus } from "../../modules/auth/type.js";
 
 import { verifyToken } from "../utils/token.js";
+import settingsRepository from "../../modules/settings/repository.js";
 
 const protect = async (
     req: AuthRequest,
@@ -87,11 +88,20 @@ const protect = async (
             });
         }
 
+        const settings = await settingsRepository.getGlobal();
+        if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
+            return res.status(403).json({
+                success: false,
+                message: "Your account is pending admin approval.",
+            });
+        }
+
         req.user = {
             id: user._id.toString(),
             name: user.name,
             role: user.role,
             email: user.email,
+            ...(user.phone ? { phone: user.phone } : {}),
             permissions: Array.from(
                 user.permissions ?? []
             ),
@@ -100,9 +110,9 @@ const protect = async (
             ...(user.image ? { image: user.image } : {}),
             ...(user.verificationStatus
                 ? {
-                      verificationStatus:
-                          user.verificationStatus,
-                  }
+                    verificationStatus:
+                        user.verificationStatus,
+                }
                 : {}),
         };
 
