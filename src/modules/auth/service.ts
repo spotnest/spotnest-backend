@@ -3,25 +3,16 @@ import authRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import { UserRole, UserStatus, type IUser, type JwtPayload, type AuthResponse, type SignupPendingResponse } from "./type.js";
 import type { LoginInput, RefreshTokenInput, SignupInput, VerifyEmailInput, ResendVerificationInput, ForgotPasswordInput, ResetPasswordInput } from "./validation.js";
-import { verifyToken, toAuthResponse, hashToken } from "../../shared/utils/token.js";
+import { verifyToken, toAuthResponse } from "../../shared/utils/token.js";
 import { generateOtp, hashOtp, compareOtp } from "../../shared/utils/otp.js";
 import { uploadImage, deleteImage, uploadIdDocument, getSignedIdDocumentUrl } from "../../shared/utils/cloudinary.js";
 import { sendOtpEmail, sendOwnerRegistrationAlert, sendOwnerApprovedEmail, sendOwnerRejectedEmail } from "../../shared/utils/email.js";
-
-const createSessionForRefreshToken = async (
-    userId: string,
-    refreshToken: string
-): Promise<void> => {
-    const decoded = verifyToken(refreshToken);
-    const tokenHash = hashToken(refreshToken);
-    const expiresAt = decoded.exp
-        ? new Date(decoded.exp * 1000)
-        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-    await authRepository.createSession(userId, tokenHash, expiresAt);
-};
+import settingsRepository from "../settings/repository.js";
 
 const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
+    const settings = await settingsRepository.getGlobal();
+    if (!settings.userRegistrationEnabled) throw new AppError(403, "User registration is currently disabled");
+    if (data.role === UserRole.OWNER && !settings.ownerRegistrationEnabled) throw new AppError(403, "Owner registration is currently disabled");
     const existing = await authRepository.findByEmail(data.email);
     if (existing) {
         throw new AppError(409, "Email already registered");
@@ -34,6 +25,9 @@ const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
         email: data.email,
         password_hash,
         role: data.role as UserRole,
+        ...(data.role === UserRole.OWNER
+            ? { isVerified: false, verificationStatus: settings.ownerApprovalRequired ? "pending" as const : "unsubmitted" as const }
+            : {}),
         ...(data.phone ? { phone: data.phone } : {}),
         ...(data.image ? { image: data.image } : {}),
     });
@@ -42,8 +36,12 @@ const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
     const otpHash = await hashOtp(otp);
     const otpExpiry = new Date(Date.now() + Number(process.env.OTP_EXPIRY_MINUTES ?? 10) * 60_000);
 
-    await authRepository.updateOtp(user._id.toString(), otpHash, otpExpiry, "email_verify");
-    await sendOtpEmail(user.email, otp, "email_verify");
+    if (settings.emailVerificationRequired) {
+        await authRepository.updateOtp(user._id.toString(), otpHash, otpExpiry, "email_verify");
+        await sendOtpEmail(user.email, otp, "email_verify");
+    } else {
+        await authRepository.markVerified(user._id.toString());
+    }
 
     return {
         message: "Account created. Check your email for a verification code.",
@@ -66,18 +64,21 @@ const login = async (data: LoginInput): Promise<AuthResponse> => {
         throw new AppError(403, "Account is not active");
     }
 
-    if (!user.isVerified) {
+    const settings = await settingsRepository.getGlobal();
+    if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
+        throw new AppError(403, "Your account is pending admin approval.");
+    }
+
+    if (settings.emailVerificationRequired && !user.isVerified) {
         throw new AppError(403, "Please verify your email before logging in");
     }
 
-    const authResponse = toAuthResponse(user);
-    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
-
-    return authResponse;
+    return toAuthResponse(user);
 };
 
 const verifyEmail = async (data: VerifyEmailInput): Promise<AuthResponse> => {
     const user = await authRepository.findByEmailWithOtp(data.email);
+    const settings = await settingsRepository.getGlobal();
 
     const genericError = () => new AppError(400, "Invalid or expired verification code");
 
@@ -99,13 +100,10 @@ const verifyEmail = async (data: VerifyEmailInput): Promise<AuthResponse> => {
         throw genericError();
     }
 
-    await authRepository.markVerified(user._id.toString());
+    await authRepository.markVerified(user._id.toString(), !settings.ownerApprovalRequired);
     await authRepository.clearOtp(user._id.toString());
 
-    const authResponse = toAuthResponse(user);
-    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
-
-    return authResponse;
+    return toAuthResponse(user);
 };
 
 const resendVerification = async (data: ResendVerificationInput): Promise<{ message: string }> => {
@@ -200,13 +198,6 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
         throw new AppError(401, "Invalid or expired refresh token");
     }
 
-    const tokenHash = hashToken(data.refreshToken);
-    const activeSession = await authRepository.findActiveSession(decoded.userId, tokenHash);
-
-    if (!activeSession) {
-        throw new AppError(401, "Invalid or expired refresh token");
-    }
-
     const user = await authRepository.findById(decoded.userId);
     if (!user) {
         throw new AppError(401, "User no longer exists");
@@ -216,26 +207,38 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
         throw new AppError(403, "Account is not active");
     }
 
-    // Token Rotation: revoke old session and issue new token + session
-    await authRepository.revokeSessionByHash(tokenHash);
-
-    const authResponse = toAuthResponse(user);
-    await createSessionForRefreshToken(user._id.toString(), authResponse.refreshToken);
-
-    return authResponse;
-};
-
-const logout = async (refreshToken?: string): Promise<{ message: string }> => {
-    if (refreshToken) {
-        try {
-            const tokenHash = hashToken(refreshToken);
-            await authRepository.revokeSessionByHash(tokenHash);
-        } catch {
-            // Best-effort revocation on logout
-        }
+    const settings = await settingsRepository.getGlobal();
+    if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
+        throw new AppError(403, "Your account is pending admin approval.");
     }
 
-    return { message: "Logged out successfully" };
+    return toAuthResponse(user);
+};
+
+const updateProfile = async (userId: string, data: { name?: string; phone?: string }) => {
+    const user = await authRepository.updateProfile(userId, data);
+    if (!user) throw new AppError(404, "User not found");
+    return { id: user._id.toString(), name: user.name, email: user.email, phone: user.phone, role: user.role, image: user.image };
+};
+
+const changePassword = async (userId: string, currentPassword: string, newPassword: string) => {
+    const user = await authRepository.findById(userId);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) throw new AppError(400, "Current password is incorrect");
+    await authRepository.updatePassword(userId, await bcrypt.hash(newPassword, 10));
+    return { message: "Password changed successfully" };
+};
+
+const listUsers = async () => {
+    const users = await authRepository.findAllUsers();
+    return users.map((user) => ({
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        isVerified: user.isVerified,
+        createdAt: user.created_at.toISOString(),
+    }));
 };
 
 // ---- Profile picture ----
@@ -293,22 +296,29 @@ const submitIdVerification = async (
 
     // Best-effort — a failed admin-alert email should never break submission.
     const { email, name } = user;
-    sendOwnerRegistrationAlert(email, name).catch((err) => {
-        console.error("[EMAIL_FAILED] owner registration alert:", err);
-    });
+    settingsRepository.getGlobal().then((settings) => {
+        if (settings.newOwnerRegistrationAlerts) {
+            sendOwnerRegistrationAlert(email, name).catch((err) => console.error("[EMAIL_FAILED] owner registration alert:", err));
+        }
+    }).catch((err) => console.error("[SETTINGS_FAILED] owner registration alert:", err));
 
     return { message: "ID submitted for review", status: "pending" };
 };
 
 const listPendingVerifications = async (): Promise<
-    { id: string; name: string; email: string; submittedAt?: Date }[]
+    { id: string; name: string; email: string; phone?: string; status: string; isVerified: boolean; verificationStatus?: string; createdAt: string; submittedAt?: string }[]
 > => {
     const users = await authRepository.findPendingVerifications();
     return users.map((u) => ({
         id: u._id.toString(),
         name: u.name,
         email: u.email,
-        ...(u.verificationSubmittedAt ? { submittedAt: u.verificationSubmittedAt } : {}),
+        ...(u.phone ? { phone: u.phone } : {}),
+        status: u.status,
+        isVerified: u.isVerified,
+        ...(u.verificationStatus ? { verificationStatus: u.verificationStatus } : {}),
+        createdAt: u.created_at.toISOString(),
+        ...(u.verificationSubmittedAt ? { submittedAt: u.verificationSubmittedAt.toISOString() } : {}),
     }));
 };
 
@@ -327,14 +337,16 @@ const getIdDocumentUrl = async (userId: string, adminId: string): Promise<{ url:
 
 const approveOwnerVerification = async (userId: string, adminId: string): Promise<{ message: string }> => {
     const user = await authRepository.findById(userId);
-    if (!user || user.verificationStatus !== "pending") {
+    if (!user || user.role !== UserRole.OWNER || user.verificationStatus !== "pending") {
         throw new AppError(400, "No pending verification request for this user");
     }
     await authRepository.approveVerification(userId, adminId);
 
-    sendOwnerApprovedEmail(user.email).catch((err) => {
-        console.error("[EMAIL_FAILED] owner approved:", err);
-    });
+    settingsRepository.getGlobal().then((settings) => {
+        if (settings.ownerApprovalEmails) {
+            sendOwnerApprovedEmail(user.email).catch((err) => console.error("[EMAIL_FAILED] owner approved:", err));
+        }
+    }).catch((err) => console.error("[SETTINGS_FAILED] owner approval email:", err));
 
     return { message: "Owner verification approved" };
 };
@@ -345,7 +357,7 @@ const rejectOwnerVerification = async (
     reason: string
 ): Promise<{ message: string }> => {
     const user = await authRepository.findByIdWithIdDocument(userId);
-    if (!user || user.verificationStatus !== "pending") {
+    if (!user || user.role !== UserRole.OWNER || user.verificationStatus !== "pending") {
         throw new AppError(400, "No pending verification request for this user");
     }
 
@@ -379,7 +391,9 @@ const authService = {
     forgotPassword,
     resetPassword,
     refresh,
-    logout,
+    updateProfile,
+    changePassword,
+    listUsers,
     uploadProfileImage,
     submitIdVerification,
     listPendingVerifications,

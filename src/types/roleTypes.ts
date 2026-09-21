@@ -6,10 +6,11 @@ export interface AuthRequest extends Request {
         name: string;
         role: 'user' | 'admin' | 'owner';
         email: string;
+        phone?: string;
         image?: string;
         permissions: string[];
-        isVerified?: boolean;
-        isBlock?: boolean;
+        isVerified: boolean;
+        isBlock: boolean;
         verificationStatus?: 'unsubmitted' | 'pending' | 'approved' | 'rejected';
     };
 }

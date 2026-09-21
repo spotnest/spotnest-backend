@@ -2,7 +2,8 @@ import propertyRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import { uploadImage, deleteImage } from "../../shared/utils/cloudinary.js";
 import { UserRole } from "../auth/type.js";
-import type { IProperty } from "./type.js";
+import type { AdminProperty, IProperty } from "./type.js";
+import settingsRepository from "../settings/repository.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
@@ -23,6 +24,8 @@ const createProperty = async (
     data: CreatePropertyInput,
     files: { buffer: Buffer; mimetype: string }[]
 ): Promise<IProperty> => {
+    const settings = await settingsRepository.getGlobal();
+    if (!settings.propertyListingEnabled) throw new AppError(403, "Property listing is currently disabled");
     if (files.length === 0) {
         throw new AppError(400, "At least one property image is required");
     }
@@ -39,7 +42,7 @@ const createProperty = async (
         ...listingFields,
         owner: ownerId,
         images: [],
-        status: "inactive",
+        status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
         ...(areaSqFt !== undefined ? { areaSqFt } : {}),
     });
 
@@ -71,7 +74,7 @@ const createProperty = async (
     try {
         const withImages = await propertyRepository.updateProperty(property._id.toString(), {
             images: uploaded,
-            status: "active",
+            status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
         } as Partial<IProperty>);
         return withImages!;
     } catch (err) {
@@ -207,11 +210,17 @@ const archiveProperty = async (id: string, userId: string, role: string): Promis
 };
 
 const listAllForAdmin = async (query: AdminListPropertiesQuery) => {
-    const { items, total } = await propertyRepository.findMany(query, query.status);
+    const { items, total } = await propertyRepository.findManyForAdmin(query);
     return {
         items,
         pagination: { page: query.page, limit: query.limit, total, pages: Math.ceil(total / query.limit) },
     };
+};
+
+const getAdminPropertyById = async (id: string): Promise<AdminProperty> => {
+    const property = await propertyRepository.findAdminById(id);
+    if (!property) throw new AppError(404, "Property not found");
+    return property;
 };
 
 const propertyService = {
@@ -225,5 +234,6 @@ const propertyService = {
     removeImage,
     archiveProperty,
     listAllForAdmin,
+    getAdminPropertyById,
 };
 export default propertyService;

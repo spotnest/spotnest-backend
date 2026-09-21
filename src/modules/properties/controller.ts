@@ -9,8 +9,7 @@ import {
     adminListPropertiesQuerySchema,
 } from "./validation.js";
 
-// multipart form-data delivers `address` and `amenities` as raw strings;
-// Zod expects real objects/arrays, so JSON-parse them before validation.
+
 const parseJsonFields = (body: Record<string, unknown>) => {
     const parsed = { ...body };
     for (const key of ["address", "amenities"]) {
@@ -134,6 +133,15 @@ export const listAllForAdmin = async (req: AuthRequest, res: Response, next: Nex
         const query = adminListPropertiesQuerySchema.parse(req.query);
         const result = await propertyService.listAllForAdmin(query);
         res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getAdminProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const property = await propertyService.getAdminPropertyById(req.params.id as string);
+        res.status(200).json(property);
     } catch (err) {
         next(err);
     }

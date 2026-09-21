@@ -89,6 +89,9 @@ router.get(
     }
 );
 
+router.patch("/me", protect, authController.updateProfile);
+router.patch("/me/password", protect, authController.changePassword);
+
 /**
  * =========================
  * GOOGLE OAUTH
@@ -143,6 +146,13 @@ router.get(
     protect,
     requireRole(UserRole.ADMIN),
     authController.listPendingVerifications
+);
+
+router.get(
+    "/admin/users",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.listUsers
 );
 
 router.get(

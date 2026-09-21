@@ -1,6 +1,6 @@
 import Property from "./model.js";
-import type { IProperty, PropertyStatus, PropertyType } from "./type.js";
-import type { ListPropertiesQuery } from "./validation.js";
+import type { AdminProperty, AdminPropertyOwner, IProperty, PropertyStatus, PropertyType } from "./type.js";
+import type { AdminListPropertiesQuery, ListPropertiesQuery } from "./validation.js";
 
 export interface CreatePropertyData {
     owner: string;
@@ -63,6 +63,53 @@ const findMany = async (
     return { items, total };
 };
 
+const findManyForAdmin = async (
+    query: AdminListPropertiesQuery
+): Promise<{ items: AdminProperty[]; total: number }> => {
+    const filter: Record<string, unknown> = {};
+    if (query.status) filter.status = query.status;
+    if (query.city) filter["address.city"] = new RegExp(`^${escapeRegExp(query.city)}$`, "i");
+    if (query.propertyType) filter.propertyType = query.propertyType;
+    if (query.search) {
+        const search = new RegExp(escapeRegExp(query.search), "i");
+        filter.$or = [{ title: search }, { "address.city": search }, { "address.state": search }];
+    }
+    if (query.bedrooms !== undefined) filter.bedrooms = query.bedrooms;
+    if (query.minPrice !== undefined || query.maxPrice !== undefined) {
+        filter.price = {
+            ...(query.minPrice !== undefined ? { $gte: query.minPrice } : {}),
+            ...(query.maxPrice !== undefined ? { $lte: query.maxPrice } : {}),
+        };
+    }
+
+    const skip = (query.page - 1) * query.limit;
+    const [items, total] = await Promise.all([
+        Property.find(filter)
+            .populate<{ owner: AdminPropertyOwner | null }>("owner", "name email phone isVerified verificationStatus status")
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(query.limit)
+            .lean(),
+        Property.countDocuments(filter),
+    ]);
+    return {
+        items: items.map((property) => ({
+            ...property,
+            price: property.price ?? null,
+            rentalStatus: "available" as const,
+        })),
+        total,
+    };
+};
+
+const findAdminById = async (id: string): Promise<AdminProperty | null> => {
+    const property = await Property.findById(id)
+        .populate<{ owner: AdminPropertyOwner | null }>("owner", "name email phone isVerified verificationStatus status")
+        .lean();
+
+    return property ? { ...property, price: property.price ?? null, rentalStatus: "available" as const } : null;
+};
+
 const updateProperty = async (id: string, data: Partial<IProperty>): Promise<IProperty | null> => {
     return Property.findByIdAndUpdate(id, { $set: data }, { new: true });
 };
@@ -83,6 +130,8 @@ const propertyRepository = {
     findById,
     findByOwner,
     findMany,
+    findManyForAdmin,
+    findAdminById,
     updateProperty,
     setStatus,
     deletePropertyById,

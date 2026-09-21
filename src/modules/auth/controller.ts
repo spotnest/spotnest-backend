@@ -12,6 +12,8 @@ import {
     forgotPasswordSchema,
     resetPasswordSchema,
     rejectVerificationSchema,
+    updateProfileSchema,
+    changePasswordSchema,
 } from "./validation.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -226,6 +228,19 @@ const resetPassword = async (
     }
 };
 
+const listUsers = async (
+    _req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const result = await authService.listUsers();
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        next(err);
+    }
+};
+
 const logout = async (
     req: Request,
     res: Response,
@@ -243,6 +258,20 @@ const logout = async (
     } catch (err) {
         next(err);
     }
+};
+
+const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const data = updateProfileSchema.parse(req.body);
+        res.status(200).json({ success: true, data: await authService.updateProfile(req.user!.id, data as { name?: string; phone?: string }) });
+    } catch (err) { next(err); }
+};
+
+const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const data = changePasswordSchema.parse(req.body);
+        res.status(200).json({ success: true, data: await authService.changePassword(req.user!.id, data.currentPassword, data.newPassword) });
+    } catch (err) { next(err); }
 };
 
 const uploadProfileImage = async (
@@ -382,7 +411,10 @@ const authController = {
     resendVerification,
     forgotPassword,
     resetPassword,
+    listUsers,
     logout,
+    updateProfile,
+    changePassword,
     uploadProfileImage,
     uploadIdVerification,
     listPendingVerifications,

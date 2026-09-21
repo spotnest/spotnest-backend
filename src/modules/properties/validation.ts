@@ -39,5 +39,6 @@ export type ListPropertiesQuery = z.infer<typeof listPropertiesQuerySchema>;
 
 export const adminListPropertiesQuerySchema = listPropertiesQuerySchema.extend({
     status: z.enum(["active", "inactive", "archived"]).optional(),
+    search: z.string().trim().min(1).optional(),
 });
 export type AdminListPropertiesQuery = z.infer<typeof adminListPropertiesQuerySchema>;
