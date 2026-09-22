@@ -167,7 +167,7 @@ const findNearby = async (
 };
 
 const updateProperty = async (id: string, data: Partial<IProperty>): Promise<IProperty | null> => {
-    return Property.findByIdAndUpdate(id, { $set: data }, { new: true });
+    return Property.findByIdAndUpdate(id, { $set: data }, { returnDocument: "after" });
 };
 
 const setStatus = async (id: string, status: string): Promise<void> => {

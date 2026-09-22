@@ -1,9 +1,14 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import type {
     IUser,
     JwtPayload,
     AuthResponse,
 } from "../../modules/auth/type.js";
+
+const hashToken = (token: string): string => {
+    return crypto.createHash("sha256").update(token).digest("hex");
+};
 
 const getSecret = (): string => {
     const secret = process.env.JWT_SECRET;
@@ -116,6 +121,7 @@ const toAuthResponse = (user: IUser): AuthResponse => {
 };
 
 export {
+    hashToken,
     getSecret,
     parseExpiry,
     buildTokenPayload,

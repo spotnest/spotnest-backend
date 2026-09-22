@@ -72,15 +72,32 @@ const createProperty = async (
         ...(areaSqFt !== undefined ? { areaSqFt } : {}),
     });
 
+    const uploadResults = await Promise.allSettled(
+        files.map((file) =>
+            uploadImage(file.buffer, `spotnest/properties/${property._id.toString()}`)
+        )
+    );
+
     const uploaded: { url: string; publicId: string }[] = [];
-    try {
-        for (const file of files) {
-            const { url, publicId } = await uploadImage(
-                file.buffer,
-                `spotnest/properties/${property._id.toString()}`
-            );
-            uploaded.push({ url, publicId });
+    let hasError = false;
+
+    for (const result of uploadResults) {
+        if (result.status === "fulfilled") {
+            uploaded.push(result.value);
+        } else {
+            hasError = true;
         }
+    }
+
+    if (hasError) {
+        await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
+        // The listing never became public (it stayed "inactive"), so hard-delete
+        // it rather than leave an image-less row in the archive.
+        await propertyRepository.deletePropertyById(property._id.toString());
+        throw new AppError(500, "Failed to create property listing. Please try again.");
+    }
+
+    try {
         const withImages = await propertyRepository.updateProperty(property._id.toString(), {
             images: uploaded,
             status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
@@ -88,8 +105,6 @@ const createProperty = async (
         return withImages!;
     } catch (err) {
         await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
-        // The listing never became public (it stayed "inactive"), so hard-delete
-        // it rather than leave an image-less row in the archive.
         await propertyRepository.deletePropertyById(property._id.toString());
         throw new AppError(500, "Failed to create property listing. Please try again.");
     }
@@ -192,13 +207,22 @@ const addImages = async (
         throw new AppError(400, `A property can have at most ${MAX_IMAGES} images`);
     }
 
+    const uploadResults = await Promise.allSettled(
+        files.map((file) => uploadImage(file.buffer, `spotnest/properties/${id}`))
+    );
+
     const uploaded: { url: string; publicId: string }[] = [];
-    try {
-        for (const file of files) {
-            const { url, publicId } = await uploadImage(file.buffer, `spotnest/properties/${id}`);
-            uploaded.push({ url, publicId });
+    let hasError = false;
+
+    for (const result of uploadResults) {
+        if (result.status === "fulfilled") {
+            uploaded.push(result.value);
+        } else {
+            hasError = true;
         }
-    } catch (err) {
+    }
+
+    if (hasError) {
         await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
         throw new AppError(500, "Failed to upload images");
     }

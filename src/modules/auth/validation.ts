@@ -4,7 +4,7 @@ export const signupSchema = z.object({
     name: z.string().min(2, "Name must be at least 2 characters").max(100),
     email: z.string().email("Invalid email format").max(150),
     phone: z.string().min(10).max(20).optional(),
-    password: z.string().min(6, "Password must be at least 6 characters").max(255),
+    password: z.string().min(8, "Password must be at least 8 characters").max(255),
     image: z.string().url("Invalid image URL").optional(),
     // NEW — "admin" is never client-requestable
     role: z.enum(["user", "owner"]).default("user"),
@@ -35,7 +35,7 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
     email: z.string().email("Invalid email format"),
     otp: z.string().regex(/^\d{6}$/, "OTP must be exactly 6 digits"),
-    newPassword: z.string().min(6, "Password must be at least 6 characters").max(255),
+    newPassword: z.string().min(8, "Password must be at least 8 characters").max(255),
 });
 
 export const updateProfileSchema = z.object({

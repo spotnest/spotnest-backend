@@ -26,7 +26,7 @@ const findById = async (id: string): Promise<IUser | null> => {
 };
 
 const updateProfile = async (userId: string, data: { name?: string; phone?: string }): Promise<IUser | null> => {
-    return User.findByIdAndUpdate(userId, { $set: data }, { new: true });
+    return User.findByIdAndUpdate(userId, { $set: data }, { returnDocument: "after" });
 };
 
 const findAllUsers = async (): Promise<IUser[]> => {
@@ -58,7 +58,7 @@ const incrementOtpAttempts = async (userId: string): Promise<number> => {
     const user = await User.findByIdAndUpdate(
         userId,
         { $inc: { otpAttempts: 1 } },
-        { new: true }
+        { returnDocument: "after" }
     ).select("+otpAttempts");
     return user?.otpAttempts ?? 0;
 };
