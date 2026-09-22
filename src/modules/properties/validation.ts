@@ -23,8 +23,21 @@ export const createPropertySchema = z.object({
 });
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
 
-export const updatePropertySchema = createPropertySchema.partial();
+export const updatePropertySchema = createPropertySchema
+    .omit({ address: true })
+    .partial()
+    .extend({ address: addressSchema.optional() });
 export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
+
+export const nearbyQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+    propertyType: propertyTypeEnum.optional(),
+    minPrice: z.coerce.number().min(0).optional(),
+    maxPrice: z.coerce.number().min(0).optional(),
+    bedrooms: z.coerce.number().int().min(0).optional(),
+});
+export type NearbyQuery = z.infer<typeof nearbyQuerySchema>;
 
 export const listPropertiesQuerySchema = z.object({
     page: z.coerce.number().int().min(1).default(1),

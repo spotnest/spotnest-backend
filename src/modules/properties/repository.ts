@@ -1,6 +1,8 @@
 import Property from "./model.js";
-import type { AdminProperty, AdminPropertyOwner, IProperty, PropertyStatus, PropertyType } from "./type.js";
-import type { AdminListPropertiesQuery, ListPropertiesQuery } from "./validation.js";
+import type { AdminProperty, AdminPropertyOwner, GeoPoint, IProperty, PropertyStatus, PropertyType } from "./type.js";
+import type { AdminListPropertiesQuery, ListPropertiesQuery, NearbyQuery } from "./validation.js";
+
+export const NEARBY_RADIUS_METERS = 10_000; // 10 km, fixed
 
 export interface CreatePropertyData {
     owner: string;
@@ -19,6 +21,8 @@ export interface CreatePropertyData {
         zipCode: string;
         country: string;
     };
+    location: GeoPoint;
+    locationResolvedName?: string;
     images: { url: string; publicId: string }[];
     status?: PropertyStatus;
 }
@@ -56,8 +60,14 @@ const findMany = async (
     }
 
     const skip = (query.page - 1) * query.limit;
+    // Public list payloads stay lean: drop the two heaviest text fields, which
+    // the card grid never renders. The detail endpoint (findById) returns them.
     const [items, total] = await Promise.all([
-        Property.find(filter).sort({ created_at: -1 }).skip(skip).limit(query.limit),
+        Property.find(filter)
+            .select({ description: 0, amenities: 0 })
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(query.limit),
         Property.countDocuments(filter),
     ]);
     return { items, total };
@@ -110,6 +120,52 @@ const findAdminById = async (id: string): Promise<AdminProperty | null> => {
     return property ? { ...property, price: property.price ?? null, rentalStatus: "available" as const } : null;
 };
 
+const findNearby = async (
+    coordinates: [number, number], // [lng, lat]
+    query: NearbyQuery
+): Promise<{ items: (IProperty & { distanceMeters: number })[]; total: number }> => {
+    const matchFilter: Record<string, unknown> = { status: "active" };
+    if (query.propertyType) matchFilter.propertyType = query.propertyType;
+    if (query.bedrooms !== undefined) matchFilter.bedrooms = query.bedrooms;
+    if (query.minPrice !== undefined || query.maxPrice !== undefined) {
+        matchFilter.price = {
+            ...(query.minPrice !== undefined ? { $gte: query.minPrice } : {}),
+            ...(query.maxPrice !== undefined ? { $lte: query.maxPrice } : {}),
+        };
+    }
+
+    const skip = (query.page - 1) * query.limit;
+
+    // $geoNear MUST be the first pipeline stage — MongoDB rejects it anywhere
+    // else. It sorts by distance ascending automatically.
+    const [result] = await Property.aggregate([
+        {
+            $geoNear: {
+                near: { type: "Point", coordinates },
+                distanceField: "distanceMeters",
+                maxDistance: NEARBY_RADIUS_METERS,
+                query: matchFilter,
+                spherical: true,
+            },
+        },
+        {
+            $facet: {
+                items: [
+                    { $skip: skip },
+                    { $limit: query.limit },
+                    { $project: { description: 0, amenities: 0 } },
+                ],
+                totalCount: [{ $count: "count" }],
+            },
+        },
+    ]);
+
+    return {
+        items: result?.items ?? [],
+        total: result?.totalCount?.[0]?.count ?? 0,
+    };
+};
+
 const updateProperty = async (id: string, data: Partial<IProperty>): Promise<IProperty | null> => {
     return Property.findByIdAndUpdate(id, { $set: data }, { new: true });
 };
@@ -132,6 +188,7 @@ const propertyRepository = {
     findMany,
     findManyForAdmin,
     findAdminById,
+    findNearby,
     updateProperty,
     setStatus,
     deletePropertyById,

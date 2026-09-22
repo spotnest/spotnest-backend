@@ -13,6 +13,8 @@ router.get("/admin/:id", protect, requireRole(UserRole.ADMIN), propertyControlle
 
 // Public
 router.get("/", propertyController.listProperties);
+// MUST precede /:id — express would otherwise match "nearby" as findById("nearby").
+router.get("/nearby", protect, propertyController.listNearby);
 router.get("/:id", propertyController.getProperty);
 
 // Owner — creation requires an APPROVED, verified owner. This is the first

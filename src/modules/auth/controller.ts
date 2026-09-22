@@ -14,6 +14,7 @@ import {
     rejectVerificationSchema,
     updateProfileSchema,
     changePasswordSchema,
+    updateLocationSchema,
 } from "./validation.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -265,6 +266,16 @@ const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction
     } catch (err) { next(err); }
 };
 
+const updateLocation = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const data = updateLocationSchema.parse(req.body);
+        const result = await authService.updateLocation(req.user!.id, data);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
 const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
         const data = changePasswordSchema.parse(req.body);
@@ -412,6 +423,7 @@ const authController = {
     listUsers,
     logout,
     updateProfile,
+    updateLocation,
     changePassword,
     uploadProfileImage,
     uploadIdVerification,

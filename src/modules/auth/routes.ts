@@ -84,6 +84,7 @@ router.get(
 
 router.patch("/me", protect, authController.updateProfile);
 router.patch("/me/password", protect, authController.changePassword);
+router.patch("/me/location", protect, authController.updateLocation);
 
 /**
  * =========================
