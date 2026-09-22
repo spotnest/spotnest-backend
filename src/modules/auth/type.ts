@@ -43,11 +43,13 @@ export interface IUser extends Document {
 
 // JWT token data
 export interface JwtPayload {
-    id: string
+    id: string;
     userId: string;
     email: string;
     role: UserRole;
     type: "access" | "refresh";
+    exp?: number;
+    iat?: number;
 }
 
 // response data

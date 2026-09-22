@@ -215,6 +215,10 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
     return toAuthResponse(user);
 };
 
+const logout = async (_refreshToken?: string): Promise<{ message: string }> => {
+    return { message: "Logged out successfully" };
+};
+
 const updateProfile = async (userId: string, data: { name?: string; phone?: string }) => {
     const user = await authRepository.updateProfile(userId, data);
     if (!user) throw new AppError(404, "User not found");
@@ -391,6 +395,7 @@ const authService = {
     forgotPassword,
     resetPassword,
     refresh,
+    logout,
     updateProfile,
     changePassword,
     listUsers,
