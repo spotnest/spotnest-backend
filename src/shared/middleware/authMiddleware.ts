@@ -114,6 +114,15 @@ const protect = async (
                         user.verificationStatus,
                 }
                 : {}),
+            ...(user.locationName
+                ? { locationName: user.locationName }
+                : {}),
+            ...(user.locationResolvedName
+                ? {
+                    locationResolvedName:
+                        user.locationResolvedName,
+                }
+                : {}),
         };
 
         next();

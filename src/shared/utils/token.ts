@@ -97,6 +97,21 @@ const toAuthResponse = (user: IUser): AuthResponse => {
             ...(user.image
                 ? { image: user.image }
                 : {}),
+            // Snapshot only: these mirror the user document at the moment of
+            // this login/refresh call for Redux hydration. They are NOT part
+            // of the JWT payload (see buildTokenPayload) and MUST NOT be
+            // trusted server-side as always-current — the user document is
+            // re-read on every authenticated request. Moving them into the
+            // token would let them go stale until the next login.
+            ...(user.locationName
+                ? { locationName: user.locationName }
+                : {}),
+            ...(user.locationResolvedName
+                ? {
+                    locationResolvedName:
+                        user.locationResolvedName,
+                }
+                : {}),
         },
 
         token: signAccessToken(accessPayload),

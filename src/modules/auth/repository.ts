@@ -136,6 +136,23 @@ const rejectVerification = async (userId: string, adminId: string, reason: strin
     });
 };
 
+const updateUserLocation = async (
+    userId: string,
+    lng: number,
+    lat: number,
+    locationName: string,
+    locationResolvedName: string
+): Promise<void> => {
+    await User.findByIdAndUpdate(userId, {
+        $set: {
+            location: { type: "Point", coordinates: [lng, lat] }, // [lng, lat]
+            locationName,
+            locationResolvedName,
+            locationUpdatedAt: new Date(),
+        },
+    });
+};
+
 const authRepository = {
     createUser,
     findByEmail,
@@ -155,5 +172,6 @@ const authRepository = {
     findByIdWithIdDocument,
     approveVerification,
     rejectVerification,
+    updateUserLocation,
 };
 export default authRepository;
