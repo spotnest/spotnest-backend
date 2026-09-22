@@ -7,10 +7,9 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import User from "../../modules/auth/model.js";
 
-import { UserRole, UserStatus } from "../../modules/auth/type.js";
+import { UserStatus } from "../../modules/auth/type.js";
 
 import { verifyToken } from "../utils/token.js";
-import settingsRepository from "../../modules/settings/repository.js";
 
 const protect = async (
     req: AuthRequest,
@@ -85,14 +84,6 @@ const protect = async (
                 success: false,
                 message:
                     "Account is not active.",
-            });
-        }
-
-        const settings = await settingsRepository.getGlobal();
-        if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
-            return res.status(403).json({
-                success: false,
-                message: "Your account is pending admin approval.",
             });
         }
 

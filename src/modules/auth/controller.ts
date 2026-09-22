@@ -151,17 +151,25 @@ const verifyEmail = async (
 
         const result = await authService.verifyEmail(data);
 
-        setAuthCookies(
-            res,
-            result.token,
-            result.refreshToken
-        );
+        if ("token" in result) {
+            setAuthCookies(
+                res,
+                result.token,
+                result.refreshToken
+            );
+
+            res.status(200).json({
+                success: true,
+                data: {
+                    user: result.user,
+                },
+            });
+            return;
+        }
 
         res.status(200).json({
             success: true,
-            data: {
-                user: result.user,
-            },
+            data: result,
         });
     } catch (err) {
         next(err);

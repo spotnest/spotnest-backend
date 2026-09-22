@@ -37,6 +37,16 @@ const userSchema = new Schema<IUser>(
             default: "unsubmitted",
         },
         idDocumentPublicId: { type: String, select: false }, // only field here that's genuinely sensitive
+        idDocumentResourceType: {
+            type: String,
+            enum: ["image", "raw"],
+            select: false,
+        },
+        idDocumentFormat: {
+            type: String,
+            enum: ["jpg", "png", "pdf"],
+            select: false,
+        },
         rejectionReason: { type: String },
         verificationSubmittedAt: { type: Date },
         verificationReviewedAt: { type: Date },

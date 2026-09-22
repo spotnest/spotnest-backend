@@ -1,36 +1,148 @@
 import { Router } from "express";
+
 import protect from "../../shared/middleware/authMiddleware.js";
-import { requireRole, requireVerifiedOwner } from "../../shared/middleware/roleMiddleware.js";
+
+import {
+    requireRole,
+    requireVerifiedOwner,
+    requireOwnerOrAdmin,
+} from "../../shared/middleware/roleMiddleware.js";
+
 import { propertyImagesUpload } from "../../shared/middleware/uploadMiddleware.js";
+
 import { UserRole } from "../auth/type.js";
+
 import * as propertyController from "./controller.js";
 
 const router = Router();
 
-// Admin management views must be declared before the public /:id route.
-router.get("/admin/all", protect, requireRole(UserRole.ADMIN), propertyController.listAllForAdmin);
-router.get("/admin/:id", protect, requireRole(UserRole.ADMIN), propertyController.getAdminProperty);
+/**
+ * =========================
+ * OWNER PROPERTY LIST
+ * =========================
+ *
+ * Only an approved owner can access
+ * their own property listings.
+ *
+ * IMPORTANT:
+ * This route must be before /:id.
+ */
+router.get(
+    "/mine/all",
+    protect,
+    requireVerifiedOwner,
+    propertyController.listMyProperties
+);
 
-// Public
-router.get("/", propertyController.listProperties);
-router.get("/:id", propertyController.getProperty);
+/**
+ * =========================
+ * ADMIN MANAGEMENT
+ * =========================
+ *
+ * These routes must be declared before
+ * the public /:id route.
+ */
 
-// Owner — creation requires an APPROVED, verified owner. This is the first
-// real use of requireVerifiedOwner since it was built in the auth module.
-router.post("/", protect, requireVerifiedOwner, propertyImagesUpload, propertyController.createProperty);
-router.get("/mine/all", protect, requireRole(UserRole.OWNER), propertyController.listMyProperties);
+router.get(
+    "/admin/all",
+    protect,
+    requireRole(UserRole.ADMIN),
+    propertyController.listAllForAdmin
+);
 
-// Owner (own listings only, enforced in service) or admin
-router.patch("/:id", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.updateProperty);
-router.patch("/:id/status", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.updateStatus);
+router.get(
+    "/admin/:id",
+    protect,
+    requireRole(UserRole.ADMIN),
+    propertyController.getAdminProperty
+);
+
+/**
+ * =========================
+ * PUBLIC
+ * =========================
+ */
+
+router.get(
+    "/",
+    propertyController.listProperties
+);
+
+router.get(
+    "/:id",
+    propertyController.getProperty
+);
+
+/**
+ * =========================
+ * OWNER CREATE PROPERTY
+ * =========================
+ *
+ * Only an APPROVED owner can create
+ * a property.
+ */
+
+router.post(
+    "/",
+    protect,
+    requireVerifiedOwner,
+    propertyImagesUpload,
+    propertyController.createProperty
+);
+
+/**
+ * =========================
+ * PROPERTY MANAGEMENT
+ * =========================
+ *
+ * ADMIN:
+ *   Allowed.
+ *
+ * APPROVED OWNER:
+ *   Allowed, subject to ownership
+ *   validation inside the service.
+ *
+ * PENDING / REJECTED OWNER:
+ *   Blocked.
+ *
+ * NORMAL USER:
+ *   Blocked.
+ */
+
+router.patch(
+    "/:id",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.updateProperty
+);
+
+router.patch(
+    "/:id/status",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.updateStatus
+);
+
 router.post(
     "/:id/images",
     protect,
-    requireRole(UserRole.OWNER, UserRole.ADMIN),
+    requireOwnerOrAdmin,
     propertyImagesUpload,
     propertyController.addImages
 );
-router.delete("/:id/images", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.removeImage);
-router.delete("/:id", protect, requireRole(UserRole.OWNER, UserRole.ADMIN), propertyController.archiveProperty);
+
+router.delete(
+    "/:id/images",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.removeImage
+);
+
+router.delete(
+    "/:id",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.archiveProperty
+);
 
 export default router;

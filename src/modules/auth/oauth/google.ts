@@ -175,22 +175,52 @@ const googleCallback = async (
         /**
          * Existing SpotNest user
          */
-        if (user) {
-            if (user.isBlock) {
-                throw new AppError(
-                    403,
-                    "Account is blocked"
-                );
-            }
+if (user) {
+    if (user.isBlock) {
+        throw new AppError(
+            403,
+            "Account is blocked"
+        );
+    }
 
-            if (user.status !== UserStatus.ACTIVE) {
-                throw new AppError(
-                    403,
-                    "Account is not active"
-                );
-            }
+    if (user.status !== UserStatus.ACTIVE) {
+        throw new AppError(
+            403,
+            "Account is not active"
+        );
+    }
 
-            let shouldSave = false;
+    /**
+     * OWNER SECURITY
+     *
+     * Google OAuth must never bypass the owner
+     * certification + admin approval process.
+     *
+     * Owners must use the normal owner flow:
+     *
+     * email verification
+     * → certification submission
+     * → admin approval
+     * → normal login
+     */
+    if (
+        user.role === UserRole.OWNER &&
+        user.verificationStatus !== "approved"
+    ) {
+        const errorMessage =
+            user.verificationStatus === "pending"
+                ? "Your owner account is pending admin approval"
+                : user.verificationStatus === "rejected"
+                    ? "Your owner verification was rejected"
+                    : "Owner accounts must be approved by an administrator before login";
+
+        throw new AppError(
+            403,
+            errorMessage
+        );
+    }
+
+    let shouldSave = false;
 
             // Update Google profile image if available.
             if (image && !user.image) {
