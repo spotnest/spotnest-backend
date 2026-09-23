@@ -93,6 +93,18 @@ const userSchema = new Schema<IUser>(
             default: 0,
             select: false,
         },
+        location: {
+            type: {
+                type: String,
+                enum: ["Point"],
+            },
+            coordinates: {
+                type: [Number], // [longitude, latitude]
+            },
+        },
+        locationName: { type: String, maxlength: 200 },
+        locationResolvedName: { type: String, maxlength: 300 },
+        locationUpdatedAt: { type: Date },
     },
     {
         timestamps: { createdAt: "created_at", updatedAt: "updated_at" },

@@ -1,5 +1,8 @@
 import { Router } from "express";
 
+import * as propertyController from "./controller.js";
+
+import { propertyImagesUpload } from "../../shared/middleware/uploadMiddleware.js";
 import protect from "../../shared/middleware/authMiddleware.js";
 
 import {
@@ -8,11 +11,7 @@ import {
     requireOwnerOrAdmin,
 } from "../../shared/middleware/roleMiddleware.js";
 
-import { propertyImagesUpload } from "../../shared/middleware/uploadMiddleware.js";
-
 import { UserRole } from "../auth/type.js";
-
-import * as propertyController from "./controller.js";
 
 const router = Router();
 
@@ -66,6 +65,18 @@ router.get(
 router.get(
     "/",
     propertyController.listProperties
+);
+
+/**
+ * MUST be before /:id.
+ *
+ * Otherwise Express can interpret
+ * "nearby" as a property ID.
+ */
+router.get(
+    "/nearby",
+    protect,
+    propertyController.listNearby
 );
 
 router.get(
@@ -123,26 +134,18 @@ router.patch(
     propertyController.updateStatus
 );
 
+/**
+ * =========================
+ * PROPERTY IMAGES
+ * =========================
+ */
+
 router.post(
     "/:id/images",
     protect,
     requireOwnerOrAdmin,
     propertyImagesUpload,
     propertyController.addImages
-);
-
-router.delete(
-    "/:id/images",
-    protect,
-    requireOwnerOrAdmin,
-    propertyController.removeImage
-);
-
-router.delete(
-    "/:id",
-    protect,
-    requireOwnerOrAdmin,
-    propertyController.archiveProperty
 );
 
 export default router;

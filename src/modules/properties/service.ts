@@ -1,17 +1,36 @@
-import propertyRepository from "./repository.js";
+import propertyRepository, { NEARBY_RADIUS_METERS } from "./repository.js";
+import authRepository from "../auth/repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
+import { geocode } from "../../shared/utils/geocode.js";
 import { uploadImage, deleteImage } from "../../shared/utils/cloudinary.js";
 import { UserRole } from "../auth/type.js";
-import type { AdminProperty, IProperty } from "./type.js";
+import type { AdminProperty, IProperty, PropertyAddress } from "./type.js";
 import settingsRepository from "../settings/repository.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
     ListPropertiesQuery,
     AdminListPropertiesQuery,
+    NearbyQuery,
 } from "./validation.js";
 
 const MAX_IMAGES = 8;
+
+const geocodeAddress = async (address: PropertyAddress) => {
+    // Try the full street address first. Indian street-level addresses often
+    // fail to resolve, so fall back to locality level — plenty for a 10 km radius.
+    const full = `${address.street}, ${address.city}, ${address.state} ${address.zipCode}, ${address.country}`;
+    const locality = `${address.city}, ${address.state}, ${address.country}`;
+
+    const result = (await geocode(full)) ?? (await geocode(locality));
+    if (!result) {
+        throw new AppError(
+            400,
+            "Could not locate that address. Check the city and state are spelled correctly."
+        );
+    }
+    return result;
+};
 
 const assertOwnershipOrAdmin = (property: IProperty, userId: string, role: string) => {
     if (property.owner.toString() !== userId && role !== UserRole.ADMIN) {
@@ -38,9 +57,16 @@ const createProperty = async (
     // in the same atomic $set that attaches the uploaded images, so there is
     // no window where an image-less listing is live.
     const { areaSqFt, ...listingFields } = data;
+
+    // Geocode BEFORE creating the document — a failed lookup costs nothing
+    // here and needs no rollback.
+    const geo = await geocodeAddress(data.address);
+
     const property = await propertyRepository.createProperty({
         ...listingFields,
         owner: ownerId,
+        location: { type: "Point", coordinates: [geo.lng, geo.lat] }, // [lng, lat]
+        locationResolvedName: geo.displayName,
         images: [],
         status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
         ...(areaSqFt !== undefined ? { areaSqFt } : {}),
@@ -92,6 +118,33 @@ const listProperties = async (query: ListPropertiesQuery) => {
     };
 };
 
+const listNearbyProperties = async (userId: string, query: NearbyQuery) => {
+    const user = await authRepository.findById(userId);
+    if (!user) throw new AppError(404, "User not found");
+
+    if (!user.location?.coordinates || user.location.coordinates.length !== 2) {
+        throw new AppError(400, "Set your location before searching nearby properties");
+    }
+
+    const coordinates = user.location.coordinates as [number, number];
+    const { items, total } = await propertyRepository.findNearby(coordinates, query);
+
+    return {
+        items: items.map((p) => ({
+            ...p,
+            distanceKm: Math.round((p.distanceMeters / 1000) * 10) / 10,
+        })),
+        searchedFrom: user.locationName,
+        radiusKm: NEARBY_RADIUS_METERS / 1000,
+        pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            pages: Math.ceil(total / query.limit),
+        },
+    };
+};
+
 const getPublicPropertyById = async (id: string): Promise<IProperty> => {
     const property = await propertyRepository.findById(id);
     if (!property || property.status !== "active") {
@@ -114,7 +167,13 @@ const updateProperty = async (
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
 
-    const updated = await propertyRepository.updateProperty(id, data as Partial<IProperty>);
+    const updatePayload: Partial<IProperty> = { ...data } as Partial<IProperty>;
+    if (data.address) {
+        const geo = await geocodeAddress(data.address as PropertyAddress);
+        updatePayload.location = { type: "Point", coordinates: [geo.lng, geo.lat] };
+        updatePayload.locationResolvedName = geo.displayName;
+    }
+    const updated = await propertyRepository.updateProperty(id, updatePayload);
     return updated!;
 };
 
@@ -226,6 +285,7 @@ const getAdminPropertyById = async (id: string): Promise<AdminProperty> => {
 const propertyService = {
     createProperty,
     listProperties,
+    listNearbyProperties,
     getPublicPropertyById,
     listOwnerProperties,
     updateProperty,

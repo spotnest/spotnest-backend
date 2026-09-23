@@ -7,6 +7,7 @@ import {
     updatePropertySchema,
     listPropertiesQuerySchema,
     adminListPropertiesQuerySchema,
+    nearbyQuerySchema,
 } from "./validation.js";
 
 
@@ -43,6 +44,16 @@ export const listProperties = async (req: Request, res: Response, next: NextFunc
     try {
         const query = listPropertiesQuerySchema.parse(req.query);
         const result = await propertyService.listProperties(query);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const listNearby = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const query = nearbyQuerySchema.parse(req.query);
+        const result = await propertyService.listNearbyProperties(req.user!.id, query);
         res.status(200).json(result);
     } catch (err) {
         next(err);

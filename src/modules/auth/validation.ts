@@ -52,6 +52,11 @@ export const changePasswordSchema = z.object({
     path: ["confirmPassword"],
 });
 
+export const updateLocationSchema = z.object({
+    locationName: z.string().min(2, "Enter a place name").max(200),
+});
+export type UpdateLocationInput = z.infer<typeof updateLocationSchema>;
+
 export const rejectVerificationSchema = z.object({
     reason: z.string().min(1, "Rejection reason is required").max(500),
 });

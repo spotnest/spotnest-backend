@@ -54,7 +54,7 @@ const updateProfile = async (
 const findAllUsers = async (): Promise<IUser[]> => {
     return User.find({})
         .select(
-            "name email role status isVerified created_at"
+            "name email role status isVerified verificationStatus created_at"
         )
         .sort({ created_at: -1 });
 };
@@ -265,8 +265,28 @@ const rejectVerification = async (
 };
 
 // --------------------------------------------------
-// Repository
+// User Location
 // --------------------------------------------------
+
+const updateUserLocation = async (
+    userId: string,
+    lng: number,
+    lat: number,
+    locationName: string,
+    locationResolvedName: string
+): Promise<void> => {
+    await User.findByIdAndUpdate(userId, {
+        $set: {
+            location: {
+                type: "Point",
+                coordinates: [lng, lat],
+            },
+            locationName,
+            locationResolvedName,
+            locationUpdatedAt: new Date(),
+        },
+    });
+};
 
 const authRepository = {
     createUser,
@@ -287,6 +307,7 @@ const authRepository = {
     findByIdWithIdDocument,
     approveVerification,
     rejectVerification,
+    updateUserLocation,
 };
 
 export default authRepository;

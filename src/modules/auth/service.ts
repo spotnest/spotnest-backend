@@ -1,14 +1,17 @@
 import bcrypt from "bcryptjs";
 import authRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
+
 import {
     UserRole,
     UserStatus,
+    type IUser,
     type JwtPayload,
     type AuthResponse,
     type SignupPendingResponse,
     type OwnerEmailVerifiedResponse,
 } from "./type.js";
+
 import type {
     LoginInput,
     RefreshTokenInput,
@@ -17,16 +20,22 @@ import type {
     ResendVerificationInput,
     ForgotPasswordInput,
     ResetPasswordInput,
+    UpdateLocationInput,
 } from "./validation.js";
+
 import {
     verifyToken,
     toAuthResponse,
 } from "../../shared/utils/token.js";
+
 import {
     generateOtp,
     hashOtp,
     compareOtp,
 } from "../../shared/utils/otp.js";
+
+import { geocode } from "../../shared/utils/geocode.js";
+
 import {
     uploadImage,
     deleteImage,
@@ -34,12 +43,14 @@ import {
     deleteIdDocument,
     getSignedIdDocumentUrl,
 } from "../../shared/utils/cloudinary.js";
+
 import {
     sendOtpEmail,
     sendOwnerRegistrationAlert,
     sendOwnerApprovedEmail,
     sendOwnerRejectedEmail,
 } from "../../shared/utils/email.js";
+
 import settingsRepository from "../settings/repository.js";
 
 // -----------------------------------------------------
@@ -89,15 +100,18 @@ const register = async (
         email: data.email,
         password_hash,
         role: data.role as UserRole,
+
         ...(data.role === UserRole.OWNER
             ? {
                   verificationStatus:
                       "unsubmitted" as const,
               }
             : {}),
+
         ...(data.phone
             ? { phone: data.phone }
             : {}),
+
         ...(data.image
             ? { image: data.image }
             : {}),
@@ -186,6 +200,7 @@ const login = async (
     const settings =
         await settingsRepository.getGlobal();
 
+    // Email verification is required for login.
     if (
         settings.emailVerificationRequired &&
         !user.isVerified
@@ -200,6 +215,7 @@ const login = async (
     // OWNER APPROVAL REQUIREMENT
     // -------------------------------------------------
 
+    // An owner can login ONLY after admin approval.
     if (
         user.role === UserRole.OWNER &&
         user.verificationStatus !== "approved"
@@ -289,6 +305,7 @@ const verifyEmail = async (
         throw genericError();
     }
 
+    // Email verification only.
     await authRepository.markVerified(
         user._id.toString()
     );
@@ -297,9 +314,13 @@ const verifyEmail = async (
         user._id.toString()
     );
 
-    // OWNER:
-    // Email verification is complete, but the owner
-    // still needs admin approval before login.
+    // -------------------------------------------------
+    // OWNER
+    // -------------------------------------------------
+
+    // Email verification does NOT approve an owner.
+    // The owner must submit certification and wait
+    // for admin approval before receiving login tokens.
     if (user.role === UserRole.OWNER) {
         return {
             message:
@@ -316,9 +337,12 @@ const verifyEmail = async (
         };
     }
 
-    // NORMAL USER:
-    // Email verification completes registration,
-    // so authentication tokens can be issued.
+    // -------------------------------------------------
+    // NORMAL USER
+    // -------------------------------------------------
+
+    // Normal users can authenticate immediately
+    // after successful email verification.
     return toAuthResponse(user);
 };
 
@@ -641,6 +665,49 @@ const updateProfile = async (
 };
 
 // -----------------------------------------------------
+// UPDATE LOCATION
+// -----------------------------------------------------
+
+const updateLocation = async (
+    userId: string,
+    data: UpdateLocationInput
+) => {
+    const user =
+        await authRepository.findById(userId);
+
+    if (!user) {
+        throw new AppError(
+            404,
+            "User not found"
+        );
+    }
+
+    const result =
+        await geocode(data.locationName);
+
+    if (!result) {
+        throw new AppError(
+            400,
+            "Could not find that place. Try including the city or district, e.g. 'Mankavu, Calicut'."
+        );
+    }
+
+    await authRepository.updateUserLocation(
+        userId,
+        result.lng,
+        result.lat,
+        data.locationName,
+        result.displayName
+    );
+
+    return {
+        message: "Location updated",
+        locationName: data.locationName,
+        resolvedTo: result.displayName,
+    };
+};
+
+// -----------------------------------------------------
 // CHANGE PASSWORD
 // -----------------------------------------------------
 
@@ -694,6 +761,8 @@ const listUsers = async () => {
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
+        verificationStatus:
+            user.verificationStatus,
         createdAt:
             user.created_at.toISOString(),
     }));
@@ -1133,6 +1202,7 @@ const authService = {
     refresh,
     logout,
     updateProfile,
+    updateLocation,
     changePassword,
     listUsers,
     uploadProfileImage,
