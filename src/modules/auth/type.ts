@@ -68,6 +68,7 @@ export interface AuthResponse {
         name: string;
         email: string;
         role: UserRole;
+        verificationStatus?: "unsubmitted" | "pending" | "approved" | "rejected";
         image?: string;
         locationName?: string;
         locationResolvedName?: string;

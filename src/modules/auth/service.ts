@@ -27,7 +27,12 @@ const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
         password_hash,
         role: data.role as UserRole,
         ...(data.role === UserRole.OWNER
-            ? { isVerified: false, verificationStatus: settings.ownerApprovalRequired ? "pending" as const : "unsubmitted" as const }
+            ? {
+                isVerified: false,
+                // Owner/Agent registrations are approval requests from the
+                // outset; no separate status field is needed.
+                verificationStatus: settings.ownerApprovalRequired ? "pending" as const : "unsubmitted" as const,
+            }
             : {}),
         ...(data.phone ? { phone: data.phone } : {}),
         ...(data.image ? { image: data.image } : {}),
@@ -66,8 +71,17 @@ const login = async (data: LoginInput): Promise<AuthResponse> => {
     }
 
     const settings = await settingsRepository.getGlobal();
-    if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
-        throw new AppError(403, "Your account is pending admin approval.");
+    if (
+        settings.ownerApprovalRequired &&
+        user.role === UserRole.OWNER &&
+        (user.verificationStatus === "pending" || user.verificationStatus === "rejected" || !user.isVerified)
+    ) {
+        throw new AppError(
+            403,
+            user.verificationStatus === "rejected"
+                ? "Your account approval request was rejected."
+                : "Your account is pending admin approval. Please wait for approval."
+        );
     }
 
     if (settings.emailVerificationRequired && !user.isVerified) {
@@ -209,8 +223,17 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
     }
 
     const settings = await settingsRepository.getGlobal();
-    if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
-        throw new AppError(403, "Your account is pending admin approval.");
+    if (
+        settings.ownerApprovalRequired &&
+        user.role === UserRole.OWNER &&
+        (user.verificationStatus === "pending" || user.verificationStatus === "rejected" || !user.isVerified)
+    ) {
+        throw new AppError(
+            403,
+            user.verificationStatus === "rejected"
+                ? "Your account approval request was rejected."
+                : "Your account is pending admin approval. Please wait for approval."
+        );
     }
 
     return toAuthResponse(user);
@@ -269,6 +292,7 @@ const listUsers = async () => {
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
+        verificationStatus: user.verificationStatus,
         createdAt: user.created_at.toISOString(),
     }));
 };

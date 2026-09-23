@@ -89,10 +89,16 @@ const protect = async (
         }
 
         const settings = await settingsRepository.getGlobal();
-        if (settings.ownerApprovalRequired && user.role === UserRole.OWNER && !user.isVerified) {
+        if (
+            settings.ownerApprovalRequired &&
+            user.role === UserRole.OWNER &&
+            (user.verificationStatus === "pending" || user.verificationStatus === "rejected" || !user.isVerified)
+        ) {
             return res.status(403).json({
                 success: false,
-                message: "Your account is pending admin approval.",
+                message: user.verificationStatus === "rejected"
+                    ? "Your account approval request was rejected."
+                    : "Your account is pending admin approval. Please wait for approval.",
             });
         }
 
