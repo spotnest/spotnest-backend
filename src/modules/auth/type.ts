@@ -12,6 +12,11 @@ export enum UserStatus {
     SUSPENDED = "suspended",
 }
 
+export interface GeoPoint {
+    type: "Point";
+    coordinates: [number, number]; // [longitude, latitude] — NOT [lat, lng]
+}
+
 export interface IUser extends Document {
     name: string;
     email: string;
@@ -39,15 +44,21 @@ export interface IUser extends Document {
     otpAttempts?: number;
     created_at: Date;
     updated_at: Date;
+    location?: GeoPoint;
+    locationName?: string;         // exactly what the user typed
+    locationResolvedName?: string; // what the geocoder matched, so they can spot a bad match
+    locationUpdatedAt?: Date;
 }
 
 // JWT token data
 export interface JwtPayload {
-    id: string
+    id: string;
     userId: string;
     email: string;
     role: UserRole;
     type: "access" | "refresh";
+    exp?: number;
+    iat?: number;
 }
 
 // response data
@@ -58,6 +69,8 @@ export interface AuthResponse {
         email: string;
         role: UserRole;
         image?: string;
+        locationName?: string;
+        locationResolvedName?: string;
     };
     token: string;
     refreshToken: string;

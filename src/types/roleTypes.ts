@@ -12,5 +12,7 @@ export interface AuthRequest extends Request {
         isVerified: boolean;
         isBlock: boolean;
         verificationStatus?: 'unsubmitted' | 'pending' | 'approved' | 'rejected';
+        locationName?: string;
+        locationResolvedName?: string;
     };
 }

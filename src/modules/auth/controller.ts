@@ -14,6 +14,7 @@ import {
     rejectVerificationSchema,
     updateProfileSchema,
     changePasswordSchema,
+    updateLocationSchema,
 } from "./validation.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -242,11 +243,13 @@ const listUsers = async (
 };
 
 const logout = async (
-    _req: Request,
+    req: Request,
     res: Response,
     next: NextFunction
 ): Promise<void> => {
     try {
+        const refreshToken = req.cookies?.refreshToken;
+        await authService.logout(refreshToken);
         clearAuthCookies(res);
 
         res.status(200).json({
@@ -263,6 +266,16 @@ const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction
         const data = updateProfileSchema.parse(req.body);
         res.status(200).json({ success: true, data: await authService.updateProfile(req.user!.id, data as { name?: string; phone?: string }) });
     } catch (err) { next(err); }
+};
+
+const updateLocation = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const data = updateLocationSchema.parse(req.body);
+        const result = await authService.updateLocation(req.user!.id, data);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
 };
 
 const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -412,6 +425,7 @@ const authController = {
     listUsers,
     logout,
     updateProfile,
+    updateLocation,
     changePassword,
     uploadProfileImage,
     uploadIdVerification,

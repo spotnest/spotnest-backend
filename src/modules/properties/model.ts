@@ -23,6 +23,18 @@ const propertySchema = new Schema<IProperty>(
             zipCode: { type: String, required: true, maxlength: 20 },
             country: { type: String, required: true, maxlength: 100 },
         },
+        location: {
+            type: {
+                type: String,
+                enum: ["Point"],
+                required: true,
+            },
+            coordinates: {
+                type: [Number], // [longitude, latitude]
+                required: true,
+            },
+        },
+        locationResolvedName: { type: String, maxlength: 300 },
         images: {
             type: [{ url: String, publicId: String }],
             default: [],
@@ -37,6 +49,7 @@ const propertySchema = new Schema<IProperty>(
 );
 
 propertySchema.index({ "address.city": 1, price: 1 });
+propertySchema.index({ location: "2dsphere" });
 
 const Property = mongoose.model<IProperty>("Property", propertySchema);
 export default Property;

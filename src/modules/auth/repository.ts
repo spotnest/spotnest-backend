@@ -26,7 +26,7 @@ const findById = async (id: string): Promise<IUser | null> => {
 };
 
 const updateProfile = async (userId: string, data: { name?: string; phone?: string }): Promise<IUser | null> => {
-    return User.findByIdAndUpdate(userId, { $set: data }, { new: true });
+    return User.findByIdAndUpdate(userId, { $set: data }, { returnDocument: "after" });
 };
 
 const findAllUsers = async (): Promise<IUser[]> => {
@@ -58,7 +58,7 @@ const incrementOtpAttempts = async (userId: string): Promise<number> => {
     const user = await User.findByIdAndUpdate(
         userId,
         { $inc: { otpAttempts: 1 } },
-        { new: true }
+        { returnDocument: "after" }
     ).select("+otpAttempts");
     return user?.otpAttempts ?? 0;
 };
@@ -136,6 +136,23 @@ const rejectVerification = async (userId: string, adminId: string, reason: strin
     });
 };
 
+const updateUserLocation = async (
+    userId: string,
+    lng: number,
+    lat: number,
+    locationName: string,
+    locationResolvedName: string
+): Promise<void> => {
+    await User.findByIdAndUpdate(userId, {
+        $set: {
+            location: { type: "Point", coordinates: [lng, lat] }, // [lng, lat]
+            locationName,
+            locationResolvedName,
+            locationUpdatedAt: new Date(),
+        },
+    });
+};
+
 const authRepository = {
     createUser,
     findByEmail,
@@ -155,5 +172,6 @@ const authRepository = {
     findByIdWithIdDocument,
     approveVerification,
     rejectVerification,
+    updateUserLocation,
 };
 export default authRepository;

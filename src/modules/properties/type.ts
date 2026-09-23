@@ -9,6 +9,11 @@ export interface PropertyImage {
     publicId: string;
 }
 
+export interface GeoPoint {
+    type: "Point";
+    coordinates: [number, number]; // [longitude, latitude]
+}
+
 export interface PropertyAddress {
     street: string;
     city: string;
@@ -28,6 +33,8 @@ export interface IProperty extends Document {
     areaSqFt?: number;
     amenities: string[];
     address: PropertyAddress;
+    location: GeoPoint;
+    locationResolvedName?: string;
     images: PropertyImage[];
     status: PropertyStatus;
     created_at: Date;

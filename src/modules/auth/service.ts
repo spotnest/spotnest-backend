@@ -2,9 +2,10 @@ import bcrypt from "bcryptjs";
 import authRepository from "./repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import { UserRole, UserStatus, type IUser, type JwtPayload, type AuthResponse, type SignupPendingResponse } from "./type.js";
-import type { LoginInput, RefreshTokenInput, SignupInput, VerifyEmailInput, ResendVerificationInput, ForgotPasswordInput, ResetPasswordInput } from "./validation.js";
+import type { LoginInput, RefreshTokenInput, SignupInput, VerifyEmailInput, ResendVerificationInput, ForgotPasswordInput, ResetPasswordInput, UpdateLocationInput } from "./validation.js";
 import { verifyToken, toAuthResponse } from "../../shared/utils/token.js";
 import { generateOtp, hashOtp, compareOtp } from "../../shared/utils/otp.js";
+import { geocode } from "../../shared/utils/geocode.js";
 import { uploadImage, deleteImage, uploadIdDocument, getSignedIdDocumentUrl } from "../../shared/utils/cloudinary.js";
 import { sendOtpEmail, sendOwnerRegistrationAlert, sendOwnerApprovedEmail, sendOwnerRejectedEmail } from "../../shared/utils/email.js";
 import settingsRepository from "../settings/repository.js";
@@ -215,10 +216,41 @@ const refresh = async (data: RefreshTokenInput): Promise<AuthResponse> => {
     return toAuthResponse(user);
 };
 
+const logout = async (_refreshToken?: string): Promise<{ message: string }> => {
+    return { message: "Logged out successfully" };
+};
+
 const updateProfile = async (userId: string, data: { name?: string; phone?: string }) => {
     const user = await authRepository.updateProfile(userId, data);
     if (!user) throw new AppError(404, "User not found");
     return { id: user._id.toString(), name: user.name, email: user.email, phone: user.phone, role: user.role, image: user.image };
+};
+
+const updateLocation = async (userId: string, data: UpdateLocationInput) => {
+    const user = await authRepository.findById(userId);
+    if (!user) throw new AppError(404, "User not found");
+
+    const result = await geocode(data.locationName);
+    if (!result) {
+        throw new AppError(
+            400,
+            "Could not find that place. Try including the city or district, e.g. 'Mankavu, Calicut'."
+        );
+    }
+
+    await authRepository.updateUserLocation(
+        userId,
+        result.lng,
+        result.lat,
+        data.locationName,
+        result.displayName
+    );
+
+    return {
+        message: "Location updated",
+        locationName: data.locationName,
+        resolvedTo: result.displayName, // surface this so the user can catch a wrong match
+    };
 };
 
 const changePassword = async (userId: string, currentPassword: string, newPassword: string) => {
@@ -391,7 +423,9 @@ const authService = {
     forgotPassword,
     resetPassword,
     refresh,
+    logout,
     updateProfile,
+    updateLocation,
     changePassword,
     listUsers,
     uploadProfileImage,
