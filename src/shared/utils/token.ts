@@ -94,6 +94,9 @@ const toAuthResponse = (user: IUser): AuthResponse => {
             name: user.name,
             email: user.email,
             role: user.role,
+            ...(user.verificationStatus
+                ? { verificationStatus: user.verificationStatus }
+                : {}),
             ...(user.image
                 ? { image: user.image }
                 : {}),

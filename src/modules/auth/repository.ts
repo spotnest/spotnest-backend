@@ -31,7 +31,7 @@ const updateProfile = async (userId: string, data: { name?: string; phone?: stri
 
 const findAllUsers = async (): Promise<IUser[]> => {
     return User.find({})
-        .select("name email role status isVerified created_at")
+        .select("name email role status isVerified verificationStatus created_at")
         .sort({ created_at: -1 });
 };
 

@@ -152,11 +152,15 @@ const verifyEmail = async (
 
         const result = await authService.verifyEmail(data);
 
-        setAuthCookies(
-            res,
-            result.token,
-            result.refreshToken
-        );
+        // A newly verified Owner/Agent is still awaiting admin approval.
+        // Do not issue a dashboard session until that approval is complete.
+        if (result.user.role !== "owner" || result.user.verificationStatus !== "pending") {
+            setAuthCookies(
+                res,
+                result.token,
+                result.refreshToken
+            );
+        }
 
         res.status(200).json({
             success: true,
@@ -350,7 +354,7 @@ const listPendingVerifications = async (
         const result =
             await authService.listPendingVerifications();
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -368,7 +372,7 @@ const getIdDocumentUrl = async (
                 req.user!.id
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -386,7 +390,7 @@ const approveVerification = async (
                 req.user!.id
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -408,7 +412,7 @@ const rejectVerification = async (
                 reason
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
