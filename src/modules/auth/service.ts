@@ -52,6 +52,7 @@ import {
 } from "../../shared/utils/email.js";
 
 import settingsRepository from "../settings/repository.js";
+import notificationService from "../notifications/service.js";
 
 // -----------------------------------------------------
 // REGISTER
@@ -81,6 +82,18 @@ const register = async (
         throw new AppError(
             403,
             "Owner registration is currently disabled"
+        );
+    }
+
+    // Owner registration requires the certification document
+    // during registration itself.
+    if (
+        data.role === UserRole.OWNER &&
+        !file
+    ) {
+        throw new AppError(
+            400,
+            "Verification document is required for owner registration"
         );
     }
 
@@ -121,34 +134,153 @@ const register = async (
             : {}),
     });
 
-    const otp = generateOtp();
-    const otpHash = await hashOtp(otp);
+    let uploadedDocument: {
+        publicId: string;
+        resourceType: "image" | "raw";
+        format: "jpg" | "png" | "pdf";
+    } | null = null;
 
-    const otpExpiry = new Date(
-        Date.now() +
-            Number(
-                process.env.OTP_EXPIRY_MINUTES ?? 10
-            ) *
-                60_000
-    );
+    try {
+        // -------------------------------------------------
+        // OWNER DOCUMENT
+        // -------------------------------------------------
 
-    if (settings.emailVerificationRequired) {
-        await authRepository.updateOtp(
-            user._id.toString(),
-            otpHash,
-            otpExpiry,
-            "email_verify"
+        if (
+            data.role === UserRole.OWNER &&
+            file
+        ) {
+            uploadedDocument =
+                await uploadIdDocument(
+                    file.buffer,
+                    user._id.toString(),
+                    file.mimetype
+                );
+
+            await authRepository.submitVerificationDocument(
+                user._id.toString(),
+                uploadedDocument.publicId,
+                uploadedDocument.resourceType,
+                uploadedDocument.format
+            );
+
+            // -------------------------------------------------
+            // ADMIN NOTIFICATION
+            // -------------------------------------------------
+
+            const adminIds =
+                await authRepository.findAdminIds();
+
+            await Promise.all(
+                adminIds.map((adminId) =>
+                    notificationService.createNotification({
+                        recipient: adminId,
+                        title: "New owner approval request",
+                        message: `${user.name} submitted an ID document for approval.`,
+                        type: "owner_approval_request",
+                        referenceId:
+                            user._id.toString(),
+                        referenceType: "user",
+                    })
+                )
+            );
+
+            // Best-effort owner registration alert email.
+            settingsRepository
+                .getGlobal()
+                .then((currentSettings) => {
+                    if (
+                        currentSettings.newOwnerRegistrationAlerts
+                    ) {
+                        sendOwnerRegistrationAlert(
+                            user.email,
+                            user.name
+                        ).catch((err) => {
+                            console.error(
+                                "[EMAIL_FAILED] owner registration alert:",
+                                err
+                            );
+                        });
+                    }
+                })
+                .catch((err) => {
+                    console.error(
+                        "[SETTINGS_FAILED] owner registration alert:",
+                        err
+                    );
+                });
+        }
+
+        // -------------------------------------------------
+        // EMAIL OTP
+        // -------------------------------------------------
+
+        const otp = generateOtp();
+        const otpHash = await hashOtp(otp);
+
+        const otpExpiry = new Date(
+            Date.now() +
+                Number(
+                    process.env.OTP_EXPIRY_MINUTES ?? 10
+                ) *
+                    60_000
         );
 
-        await sendOtpEmail(
-            user.email,
-            otp,
-            "email_verify"
-        );
-    } else {
-        await authRepository.markVerified(
-            user._id.toString()
-        );
+        if (settings.emailVerificationRequired) {
+            await authRepository.updateOtp(
+                user._id.toString(),
+                otpHash,
+                otpExpiry,
+                "email_verify"
+            );
+
+            await sendOtpEmail(
+                user.email,
+                otp,
+                "email_verify"
+            );
+        } else {
+            await authRepository.markVerified(
+                user._id.toString()
+            );
+        }
+    } catch (error) {
+        // If anything after user creation fails,
+        // clean up the uploaded private document.
+        if (uploadedDocument) {
+            await deleteIdDocument(
+                uploadedDocument.publicId,
+                uploadedDocument.resourceType
+            ).catch((cleanupError) => {
+                console.error(
+                    `[CLEANUP_FAILED] orphaned verification document publicId=${uploadedDocument?.publicId}`,
+                    cleanupError
+                );
+            });
+        }
+
+        // Prevent partially-created accounts.
+        await authRepository
+            .deleteUser(user._id.toString())
+            .catch((cleanupError) => {
+                console.error(
+                    `[CLEANUP_FAILED] could not delete partially-created user userId=${user._id}`,
+                    cleanupError
+                );
+            });
+
+        throw error;
+    }
+
+    if (data.role === UserRole.OWNER) {
+        return {
+            message:
+                "Owner account created successfully. Check your email for the verification code. After email verification, your registration will be reviewed by an administrator.",
+            user: {
+                id: user._id.toString(),
+                name: user.name,
+                email: user.email,
+            },
+        };
     }
 
     return {
@@ -848,7 +980,7 @@ const uploadProfileImage = async (
 };
 
 // -----------------------------------------------------
-// OWNER CERTIFICATION SUBMISSION
+// SUBMIT OWNER ID VERIFICATION
 // -----------------------------------------------------
 
 const submitIdVerification = async (
@@ -886,8 +1018,7 @@ const submitIdVerification = async (
     }
 
     if (
-        user.verificationStatus ===
-        "approved"
+        user.verificationStatus === "approved"
     ) {
         throw new AppError(
             409,
@@ -896,8 +1027,7 @@ const submitIdVerification = async (
     }
 
     if (
-        user.verificationStatus ===
-        "pending"
+        user.verificationStatus === "pending"
     ) {
         throw new AppError(
             409,
@@ -926,14 +1056,12 @@ const submitIdVerification = async (
         await deleteIdDocument(
             publicId,
             resourceType
-        ).catch(
-            (cleanupError) => {
-                console.error(
-                    `[CLEANUP_FAILED] orphaned verification document publicId=${publicId}`,
-                    cleanupError
-                );
-            }
-        );
+        ).catch((cleanupError) => {
+            console.error(
+                `[CLEANUP_FAILED] orphaned verification document publicId=${publicId}`,
+                cleanupError
+            );
+        });
 
         throw new AppError(
             500,
@@ -941,10 +1069,21 @@ const submitIdVerification = async (
         );
     }
 
-    const {
-        email,
-        name,
-    } = user;
+    const adminIds =
+        await authRepository.findAdminIds();
+
+    await Promise.all(
+        adminIds.map((adminId) =>
+            notificationService.createNotification({
+                recipient: adminId,
+                title: "New owner approval request",
+                message: `${user.name} submitted an ID document for approval.`,
+                type: "owner_approval_request",
+                referenceId: userId,
+                referenceType: "user",
+            })
+        )
+    );
 
     settingsRepository
         .getGlobal()
@@ -953,8 +1092,8 @@ const submitIdVerification = async (
                 settings.newOwnerRegistrationAlerts
             ) {
                 sendOwnerRegistrationAlert(
-                    email,
-                    name
+                    user.email,
+                    user.name
                 ).catch((err) => {
                     console.error(
                         "[EMAIL_FAILED] owner registration alert:",
@@ -983,54 +1122,57 @@ const submitIdVerification = async (
 
 const listPendingVerifications =
     async (): Promise<
-        {
+        Array<{
             id: string;
             name: string;
             email: string;
             phone?: string;
-            status: string;
+            status: UserStatus;
             isVerified: boolean;
-            verificationStatus?: string;
-            createdAt: string;
-            submittedAt?: string;
-        }[]
+            verificationStatus: string;
+            created_at: Date;
+            verificationSubmittedAt?: Date;
+        }>
     > => {
         const users =
             await authRepository.findPendingVerifications();
+return users.map((user) => ({
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
 
-        return users.map((u) => ({
-            id: u._id.toString(),
-            name: u.name,
-            email: u.email,
-            ...(u.phone
-                ? { phone: u.phone }
-                : {}),
-            status: u.status,
-            isVerified: u.isVerified,
-            ...(u.verificationStatus
-                ? {
-                      verificationStatus:
-                          u.verificationStatus,
-                  }
-                : {}),
-            createdAt:
-                u.created_at.toISOString(),
-            ...(u.verificationSubmittedAt
-                ? {
-                      submittedAt:
-                          u.verificationSubmittedAt.toISOString(),
-                  }
-                : {}),
-        }));
+    ...(user.phone
+        ? { phone: user.phone }
+        : {}),
+
+    status: user.status,
+    isVerified: user.isVerified,
+
+    verificationStatus:
+        user.verificationStatus ?? "unsubmitted",
+
+    created_at: user.created_at,
+
+    ...(user.verificationSubmittedAt
+        ? {
+              verificationSubmittedAt:
+                  user.verificationSubmittedAt,
+          }
+        : {}),
+}));
+
     };
 
 // -----------------------------------------------------
-// GET OWNER CERTIFICATION DOCUMENT
+// GET OWNER ID DOCUMENT
+// -----------------------------------------------------
+
+// -----------------------------------------------------
+// GET OWNER ID DOCUMENT
 // -----------------------------------------------------
 
 const getIdDocumentUrl = async (
-    userId: string,
-    adminId: string
+    userId: string
 ): Promise<{
     url: string;
     expiresAt: Date;
@@ -1040,27 +1182,38 @@ const getIdDocumentUrl = async (
             userId
         );
 
+    if (!user) {
+        throw new AppError(
+            404,
+            "User not found"
+        );
+    }
+
+    if (!user.idDocumentPublicId) {
+        throw new AppError(
+            404,
+            "Verification document not found"
+        );
+    }
+
     if (
-        !user ||
-        !user.idDocumentPublicId ||
         !user.idDocumentResourceType ||
         !user.idDocumentFormat
     ) {
         throw new AppError(
-            404,
-            "No verification document found for this user"
+            500,
+            "Verification document metadata is incomplete"
         );
     }
 
-    console.log(
-        `[ID_DOCUMENT_ACCESS] admin=${adminId} viewed userId=${userId} at ${new Date().toISOString()}`
-    );
+    const signedDocument =
+        await getSignedIdDocumentUrl(
+            user.idDocumentPublicId,
+            user.idDocumentResourceType,
+            user.idDocumentFormat
+        );
 
-    return getSignedIdDocumentUrl(
-        user.idDocumentPublicId,
-        user.idDocumentResourceType,
-        user.idDocumentFormat
-    );
+    return signedDocument;
 };
 
 // -----------------------------------------------------
@@ -1073,15 +1226,12 @@ const approveOwnerVerification =
         adminId: string
     ): Promise<{ message: string }> => {
         const user =
-            await authRepository.findById(
-                userId
-            );
+            await authRepository.findById(userId);
 
         if (
             !user ||
             user.role !== UserRole.OWNER ||
-            user.verificationStatus !==
-                "pending"
+            user.verificationStatus !== "pending"
         ) {
             throw new AppError(
                 400,
@@ -1094,6 +1244,18 @@ const approveOwnerVerification =
             adminId
         );
 
+        // Notify the owner.
+        await notificationService.createNotification({
+            recipient: userId,
+            title: "Owner account approved",
+            message:
+                "Your owner account has been approved. You can now list properties.",
+            type: "owner_approved",
+            referenceId: userId,
+            referenceType: "user",
+        });
+
+        // Send approval email if enabled.
         settingsRepository
             .getGlobal()
             .then((settings) => {
@@ -1140,8 +1302,7 @@ const rejectOwnerVerification = async (
     if (
         !user ||
         user.role !== UserRole.OWNER ||
-        user.verificationStatus !==
-            "pending"
+        user.verificationStatus !== "pending"
     ) {
         throw new AppError(
             400,
@@ -1155,12 +1316,15 @@ const rejectOwnerVerification = async (
     const idResourceType =
         user.idDocumentResourceType;
 
+    // Mark the verification as rejected and
+    // remove document metadata from database.
     await authRepository.rejectVerification(
         userId,
         adminId,
         reason
     );
 
+    // Delete the actual private Cloudinary document.
     if (
         idPublicId &&
         idResourceType
@@ -1176,6 +1340,18 @@ const rejectOwnerVerification = async (
         });
     }
 
+    // Notify the owner.
+    await notificationService.createNotification({
+        recipient: userId,
+        title: "Owner account rejected",
+        message:
+            `Your owner registration request was rejected: ${reason}`,
+        type: "owner_rejected",
+        referenceId: userId,
+        referenceType: "user",
+    });
+
+    // Send rejection email.
     await sendOwnerRejectedEmail(
         user.email,
         reason

@@ -65,6 +65,28 @@ const findAllUsers = async (): Promise<IUser[]> => {
         .sort({ created_at: -1 });
 };
 
+/**
+ * Find admin user IDs.
+ *
+ * Used by the notification service when a new owner
+ * registration/verification request is submitted.
+ */
+const findAdminIds = async (): Promise<string[]> => {
+    const admins = await User.find({
+        role: UserRole.ADMIN,
+    })
+        .select("_id")
+        .lean();
+
+    return admins.map((admin) => admin._id.toString());
+};
+
+/**
+ * Find a user with OTP fields.
+ *
+ * OTP fields are excluded from the normal User queries,
+ * so they must be explicitly selected here.
+ */
 const findByEmailWithOtp = async (
     email: string
 ): Promise<IUser | null> => {
@@ -167,6 +189,13 @@ const updateProfileImage = async (
 // Owner ID verification
 // --------------------------------------------------
 
+/**
+ * Save the owner's verification document and mark the
+ * verification request as pending.
+ *
+ * resourceType and format are required because Cloudinary
+ * handles images and PDFs differently.
+ */
 const submitVerificationDocument = async (
     userId: string,
     publicId: string,
@@ -189,6 +218,14 @@ const submitVerificationDocument = async (
     });
 };
 
+/**
+ * Return only owners whose verification request is
+ * actually pending.
+ *
+ * "unsubmitted" owners are not included because the
+ * registration flow requires a document before an
+ * owner request is submitted.
+ */
 const findPendingVerifications = async (): Promise<
     IUser[]
 > => {
@@ -204,6 +241,10 @@ const findPendingVerifications = async (): Promise<
         });
 };
 
+/**
+ * Fetch all information required to securely access
+ * an owner's verification document.
+ */
 const findByIdWithIdDocument = async (
     userId: string
 ): Promise<IUser | null> => {
@@ -250,6 +291,13 @@ const approveVerification = async (
     }
 };
 
+/**
+ * Reject owner verification.
+ *
+ * The document metadata is removed from the database.
+ * The service layer is responsible for deleting the
+ * actual Cloudinary asset.
+ */
 const rejectVerification = async (
     userId: string,
     adminId: string,
@@ -301,6 +349,7 @@ const authRepository = {
     findById,
     updateProfile,
     findAllUsers,
+    findAdminIds,
     findByEmailWithOtp,
     updateOtp,
     incrementOtpAttempts,
