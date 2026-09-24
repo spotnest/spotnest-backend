@@ -6,6 +6,7 @@ import { uploadImage, deleteImage } from "../../shared/utils/cloudinary.js";
 import { UserRole } from "../auth/type.js";
 import type { AdminProperty, IProperty, PropertyAddress } from "./type.js";
 import settingsRepository from "../settings/repository.js";
+import notificationService from "../notifications/service.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
@@ -190,6 +191,18 @@ const updateStatus = async (
         throw new AppError(400, "Cannot change status of an archived property");
     }
     await propertyRepository.setStatus(id, status);
+
+    if (role === UserRole.ADMIN && property.status !== status) {
+        await notificationService.createNotification({
+            recipient: property.owner.toString(),
+            title: `Property ${status}`,
+            message: `Your property “${property.title}” is now ${status}.`,
+            type: "property_status",
+            referenceId: id,
+            referenceType: "property",
+        });
+    }
+
     return { message: `Property marked ${status}` };
 };
 
