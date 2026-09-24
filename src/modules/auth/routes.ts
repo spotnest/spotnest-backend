@@ -29,6 +29,7 @@ const router = Router();
 router.post(
     "/signup",
     authRateLimiter,
+    idDocumentUpload,
     authController.signup
 );
 

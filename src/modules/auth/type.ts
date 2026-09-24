@@ -1,9 +1,10 @@
 import { Document } from "mongoose";
 
 export enum UserRole {
-    USER = "user",
-    ADMIN = "admin",
-    OWNER = "owner",
+  USER = "user",
+  TENANT = "tenant",
+  OWNER = "owner",
+  ADMIN = "admin",
 }
 
 export enum UserStatus {
@@ -29,6 +30,8 @@ export interface IUser extends Document {
     // Owner ID verification
     verificationStatus?: "unsubmitted" | "pending" | "approved" | "rejected";
     idDocumentPublicId?: string;       // sensitive — select: false
+    idDocumentResourceType?: "image" | "raw";
+    idDocumentFormat?: "jpg" | "png" | "pdf";
     rejectionReason?: string;
     verificationSubmittedAt?: Date;
     verificationReviewedAt?: Date;
@@ -75,6 +78,20 @@ export interface AuthResponse {
     };
     token: string;
     refreshToken: string;
+}
+export interface OwnerEmailVerifiedResponse {
+    message: string;
+    user: {
+        id: string;
+        name: string;
+        email: string;
+        role: UserRole;
+        verificationStatus:
+            | "unsubmitted"
+            | "pending"
+            | "approved"
+            | "rejected";
+    };
 }
 
 export interface SignupPendingResponse {
