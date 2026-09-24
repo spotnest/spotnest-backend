@@ -68,7 +68,15 @@ const signup = async (
     try {
         const data = signupSchema.parse(req.body);
 
-        const result = await authService.register(data);
+        const result = await authService.register(
+            data,
+            req.file
+                ? {
+                      buffer: req.file.buffer,
+                      mimetype: req.file.mimetype,
+                  }
+                : undefined
+        );
 
         res.status(201).json({
             success: true,

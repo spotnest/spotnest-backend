@@ -58,7 +58,11 @@ import settingsRepository from "../settings/repository.js";
 // -----------------------------------------------------
 
 const register = async (
-    data: SignupInput
+    data: SignupInput,
+    file?: {
+        buffer: Buffer;
+        mimetype: string;
+    }
 ): Promise<SignupPendingResponse> => {
     const settings =
         await settingsRepository.getGlobal();

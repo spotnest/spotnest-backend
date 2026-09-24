@@ -23,6 +23,12 @@ const createUser = async (
     return user;
 };
 
+const deleteUser = async (
+    userId: string
+): Promise<void> => {
+    await User.findByIdAndDelete(userId);
+};
+
 const findByEmail = async (
     email: string
 ): Promise<IUser | null> => {
@@ -290,6 +296,7 @@ const updateUserLocation = async (
 
 const authRepository = {
     createUser,
+    deleteUser,
     findByEmail,
     findById,
     updateProfile,
