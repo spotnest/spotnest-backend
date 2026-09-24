@@ -34,6 +34,19 @@ router.get(
 );
 
 /**
+ * Get a single property owned by the current owner.
+ *
+ * Declared AFTER /mine/all so the literal "all" is never
+ * captured by the :id param.
+ */
+router.get(
+    "/mine/:id",
+    protect,
+    requireVerifiedOwner,
+    propertyController.getMyProperty
+);
+
+/**
  * =========================
  * ADMIN MANAGEMENT
  * =========================
@@ -134,6 +147,13 @@ router.patch(
     propertyController.updateStatus
 );
 
+router.delete(
+    "/:id",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.archiveProperty
+);
+
 /**
  * =========================
  * PROPERTY IMAGES
@@ -146,6 +166,13 @@ router.post(
     requireOwnerOrAdmin,
     propertyImagesUpload,
     propertyController.addImages
+);
+
+router.post(
+    "/:id/images/remove",
+    protect,
+    requireOwnerOrAdmin,
+    propertyController.removeImage
 );
 
 export default router;

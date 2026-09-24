@@ -78,6 +78,15 @@ export const listMyProperties = async (req: AuthRequest, res: Response, next: Ne
     }
 };
 
+export const getMyProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const property = await propertyService.getMyPropertyById(req.params.id as string, req.user!.id);
+        res.status(200).json(property);
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const updateProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
         const data = updatePropertySchema.parse(parseJsonFields(req.body));
