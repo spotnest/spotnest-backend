@@ -35,6 +35,11 @@ const findAllUsers = async (): Promise<IUser[]> => {
         .sort({ created_at: -1 });
 };
 
+const findAdminIds = async (): Promise<string[]> => {
+    const admins = await User.find({ role: UserRole.ADMIN }).select("_id").lean();
+    return admins.map((admin) => admin._id.toString());
+};
+
 const findByEmailWithOtp = async (email: string): Promise<IUser | null> => {
     return User.findOne({ email: email.toLowerCase().trim() })
         .select("+otpHash +otpExpiry +otpType +otpAttempts");
@@ -106,7 +111,12 @@ const submitVerificationDocument = async (userId: string, publicId: string): Pro
 };
 
 const findPendingVerifications = async (): Promise<IUser[]> => {
-    return User.find({ role: UserRole.OWNER, verificationStatus: "pending", isVerified: false })
+    // The Users page presents both pending and legacy-unsubmitted owners as
+    // awaiting approval. Keep the Requests queue consistent with that UI.
+    return User.find({
+        role: UserRole.OWNER,
+        verificationStatus: { $in: ["pending", "unsubmitted"] },
+    })
         .select("name email phone status isVerified verificationStatus created_at verificationSubmittedAt")
         .sort({ created_at: -1 });
 };
@@ -159,6 +169,7 @@ const authRepository = {
     findById,
     updateProfile,
     findAllUsers,
+    findAdminIds,
     findByEmailWithOtp,
     updateOtp,
     incrementOtpAttempts,

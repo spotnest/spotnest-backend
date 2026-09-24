@@ -9,6 +9,7 @@ import { geocode } from "../../shared/utils/geocode.js";
 import { uploadImage, deleteImage, uploadIdDocument, getSignedIdDocumentUrl } from "../../shared/utils/cloudinary.js";
 import { sendOtpEmail, sendOwnerRegistrationAlert, sendOwnerApprovedEmail, sendOwnerRejectedEmail } from "../../shared/utils/email.js";
 import settingsRepository from "../settings/repository.js";
+import notificationService from "../notifications/service.js";
 
 const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
     const settings = await settingsRepository.getGlobal();
@@ -37,6 +38,22 @@ const register = async (data: SignupInput): Promise<SignupPendingResponse> => {
         ...(data.phone ? { phone: data.phone } : {}),
         ...(data.image ? { image: data.image } : {}),
     });
+
+    if (user.role === UserRole.OWNER && user.verificationStatus === "pending") {
+        const adminIds = await authRepository.findAdminIds();
+        await Promise.all(
+            adminIds.map((adminId) =>
+                notificationService.createNotification({
+                    recipient: adminId,
+                    title: "New owner approval request",
+                    message: `${user.name} created an owner account and is awaiting approval.`,
+                    type: "owner_approval_request",
+                    referenceId: user._id.toString(),
+                    referenceType: "user",
+                }),
+            ),
+        );
+    }
 
     const otp = generateOtp();
     const otpHash = await hashOtp(otp);
@@ -350,6 +367,20 @@ const submitIdVerification = async (
     const { publicId } = await uploadIdDocument(file.buffer, userId);
     await authRepository.submitVerificationDocument(userId, publicId);
 
+    const adminIds = await authRepository.findAdminIds();
+    await Promise.all(
+        adminIds.map((adminId) =>
+            notificationService.createNotification({
+                recipient: adminId,
+                title: "New owner approval request",
+                message: `${user.name} submitted an ID document for approval.`,
+                type: "owner_approval_request",
+                referenceId: userId,
+                referenceType: "user",
+            }),
+        ),
+    );
+
     // Best-effort — a failed admin-alert email should never break submission.
     const { email, name } = user;
     settingsRepository.getGlobal().then((settings) => {
@@ -393,10 +424,19 @@ const getIdDocumentUrl = async (userId: string, adminId: string): Promise<{ url:
 
 const approveOwnerVerification = async (userId: string, adminId: string): Promise<{ message: string }> => {
     const user = await authRepository.findById(userId);
-    if (!user || user.role !== UserRole.OWNER || user.verificationStatus !== "pending") {
+    if (!user || user.role !== UserRole.OWNER || !["pending", "unsubmitted"].includes(user.verificationStatus ?? "unsubmitted")) {
         throw new AppError(400, "No pending verification request for this user");
     }
     await authRepository.approveVerification(userId, adminId);
+
+    await notificationService.createNotification({
+        recipient: userId,
+        title: "Owner account approved",
+        message: "Your owner account has been approved. You can now list properties.",
+        type: "owner_approved",
+        referenceId: userId,
+        referenceType: "user",
+    });
 
     settingsRepository.getGlobal().then((settings) => {
         if (settings.ownerApprovalEmails) {
@@ -413,7 +453,7 @@ const rejectOwnerVerification = async (
     reason: string
 ): Promise<{ message: string }> => {
     const user = await authRepository.findByIdWithIdDocument(userId);
-    if (!user || user.role !== UserRole.OWNER || user.verificationStatus !== "pending") {
+    if (!user || user.role !== UserRole.OWNER || !["pending", "unsubmitted"].includes(user.verificationStatus ?? "unsubmitted")) {
         throw new AppError(400, "No pending verification request for this user");
     }
 
@@ -422,6 +462,15 @@ const rejectOwnerVerification = async (
     // Clears idDocumentPublicId ($unset) in the same write as status: "rejected",
     // so no signed URL can ever be minted for a deleted asset.
     await authRepository.rejectVerification(userId, adminId, reason);
+
+    await notificationService.createNotification({
+        recipient: userId,
+        title: "Owner account rejected",
+        message: `Your owner registration request was rejected: ${reason}`,
+        type: "owner_rejected",
+        referenceId: userId,
+        referenceType: "user",
+    });
 
     if (idPublicId) {
         // Best-effort cleanup of the now-invalid document — a failure here leaves
