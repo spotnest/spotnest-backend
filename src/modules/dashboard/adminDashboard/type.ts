@@ -12,7 +12,7 @@ export interface DashboardUser {
     id: string;
     name: string;
     email: string;
-    role: "admin" | "owner" | "user";
+    role: "admin" | "owner" | "tenant" | "user";
     status: "active" | "inactive" | "suspended";
     isVerified: boolean;
     createdAt: string;

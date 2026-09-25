@@ -4,6 +4,7 @@ export enum UserRole {
     USER = "user",
     ADMIN = "admin",
     OWNER = "owner",
+    TENANT = "tenant",
 }
 
 export enum UserStatus {
