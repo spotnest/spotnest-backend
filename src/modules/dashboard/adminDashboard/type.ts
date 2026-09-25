@@ -1,3 +1,5 @@
+import { UserRole, UserStatus } from "../../auth/type.js";
+
 export interface DashboardOverview {
     totalUsers: number;
     totalOwners: number;
@@ -12,8 +14,8 @@ export interface DashboardUser {
     id: string;
     name: string;
     email: string;
-    role: "admin" | "owner" | "tenant" | "user";
-    status: "active" | "inactive" | "suspended";
+    role: UserRole;
+    status: UserStatus;
     isVerified: boolean;
     createdAt: string;
 }

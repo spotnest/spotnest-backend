@@ -68,7 +68,15 @@ const signup = async (
     try {
         const data = signupSchema.parse(req.body);
 
-        const result = await authService.register(data);
+        const result = await authService.register(
+            data,
+            req.file
+                ? {
+                      buffer: req.file.buffer,
+                      mimetype: req.file.mimetype,
+                  }
+                : undefined
+        );
 
         res.status(201).json({
             success: true,
@@ -152,21 +160,34 @@ const verifyEmail = async (
 
         const result = await authService.verifyEmail(data);
 
-        // A newly verified Owner/Agent is still awaiting admin approval.
-        // Do not issue a dashboard session until that approval is complete.
-        if (result.user.role !== "owner" || result.user.verificationStatus !== "pending") {
+        // Normal users receive authentication tokens after
+        // successful email verification.
+        //
+        // Owners do NOT receive tokens here.
+        // They must first complete document verification
+        // and receive admin approval.
+        if ("token" in result) {
             setAuthCookies(
                 res,
                 result.token,
                 result.refreshToken
             );
+
+            res.status(200).json({
+                success: true,
+                data: {
+                    user: result.user,
+                },
+            });
+
+            return;
         }
 
+        // Owner email verification succeeds, but the owner
+        // remains unauthenticated until admin approval.
         res.status(200).json({
             success: true,
-            data: {
-                user: result.user,
-            },
+            data: result,
         });
     } catch (err) {
         next(err);
@@ -368,8 +389,7 @@ const getIdDocumentUrl = async (
     try {
         const result =
             await authService.getIdDocumentUrl(
-                req.params.userId as string,
-                req.user!.id
+               req.user!.id
             );
 
         res.status(200).json({ success: true, data: result });

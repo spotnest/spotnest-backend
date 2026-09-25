@@ -8,7 +8,6 @@ const DEFAULTS: SettingsUpdate = {
     ownerRegistrationEnabled: true,
     propertyApprovalRequired: false,
     propertyListingEnabled: true,
-    defaultListingStatus: "inactive",
     newOwnerRegistrationAlerts: true,
     ownerApprovalEmails: true,
     platformName: "SpotNest",

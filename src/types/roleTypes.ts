@@ -1,10 +1,10 @@
 import type { Request } from 'express';
-
+import { UserRole } from "../modules/auth/type.js";
 export interface AuthRequest extends Request {
     user?: {
         id: string;
         name: string;
-        role: 'user' | 'admin' | 'owner' | 'tenant';
+        role: UserRole;
         email: string;
         phone?: string;
         image?: string;

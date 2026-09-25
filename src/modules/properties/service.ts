@@ -53,6 +53,10 @@ const createProperty = async (
         throw new AppError(400, `A maximum of ${MAX_IMAGES} images is allowed`);
     }
 
+    // Listings go live with the final status once their images are attached.
+    // Only pending-admin-approval mode keeps them offline.
+    const status = settings.propertyApprovalRequired ? "inactive" : "active";
+
     // Create the listing as "inactive" — it is NOT visible to the public yet
     // (public listing only shows status "active"). It only becomes "active"
     // in the same atomic $set that attaches the uploaded images, so there is
@@ -69,7 +73,7 @@ const createProperty = async (
         location: { type: "Point", coordinates: [geo.lng, geo.lat] }, // [lng, lat]
         locationResolvedName: geo.displayName,
         images: [],
-        status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
+        status: "inactive",
         ...(areaSqFt !== undefined ? { areaSqFt } : {}),
     });
 
@@ -101,7 +105,7 @@ const createProperty = async (
     try {
         const withImages = await propertyRepository.updateProperty(property._id.toString(), {
             images: uploaded,
-            status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
+            status,
         } as Partial<IProperty>);
         return withImages!;
     } catch (err) {
@@ -156,6 +160,14 @@ const getPublicPropertyById = async (id: string): Promise<IProperty> => {
 
 const listOwnerProperties = async (ownerId: string): Promise<IProperty[]> => {
     return propertyRepository.findByOwner(ownerId);
+};
+
+const getMyPropertyById = async (id: string, ownerId: string): Promise<IProperty> => {
+    const property = await propertyRepository.findById(id);
+    if (!property || property.owner.toString() !== ownerId) {
+        throw new AppError(404, "Property not found");
+    }
+    return property;
 };
 
 const updateProperty = async (
@@ -301,6 +313,7 @@ const propertyService = {
     listNearbyProperties,
     getPublicPropertyById,
     listOwnerProperties,
+    getMyPropertyById,
     updateProperty,
     updateStatus,
     addImages,

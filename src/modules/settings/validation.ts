@@ -7,7 +7,6 @@ export const settingsUpdateSchema = z.object({
     ownerRegistrationEnabled: z.boolean().optional(),
     propertyApprovalRequired: z.boolean().optional(),
     propertyListingEnabled: z.boolean().optional(),
-    defaultListingStatus: z.enum(["active", "inactive"]).optional(),
     newOwnerRegistrationAlerts: z.boolean().optional(),
     ownerApprovalEmails: z.boolean().optional(),
     platformName: z.string().min(1).max(100).optional(),
