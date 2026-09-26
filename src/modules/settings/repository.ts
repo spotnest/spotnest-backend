@@ -8,7 +8,6 @@ const DEFAULTS: SettingsUpdate = {
     ownerRegistrationEnabled: true,
     propertyApprovalRequired: false,
     propertyListingEnabled: true,
-    defaultListingStatus: "inactive",
     newOwnerRegistrationAlerts: true,
     ownerApprovalEmails: true,
     platformName: "SpotNest",
@@ -24,7 +23,7 @@ const getGlobal = async (): Promise<ISettings> => {
     return Settings.findOneAndUpdate(
         { key: "global" },
         { $setOnInsert: { key: "global", ...DEFAULTS } },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
+        { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
     );
 };
 
@@ -32,7 +31,7 @@ const updateGlobal = async (data: SettingsUpdate): Promise<ISettings> => {
     return Settings.findOneAndUpdate(
         { key: "global" },
         { $set: data },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
+        { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
     );
 };
 

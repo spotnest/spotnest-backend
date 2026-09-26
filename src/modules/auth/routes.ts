@@ -4,6 +4,7 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import protect from "../../shared/middleware/authMiddleware.js";
 import { requireRole } from "../../shared/middleware/roleMiddleware.js";
+import { authRateLimiter } from "../../shared/middleware/rateLimiter.js";
 import {
     profileImageUpload,
     idDocumentUpload,
@@ -27,11 +28,14 @@ const router = Router();
 
 router.post(
     "/signup",
+    authRateLimiter,
+    idDocumentUpload,
     authController.signup
 );
 
 router.post(
     "/login",
+    authRateLimiter,
     authController.login
 );
 
@@ -42,21 +46,25 @@ router.post(
 
 router.post(
     "/verify-email",
+    authRateLimiter,
     authController.verifyEmail
 );
 
 router.post(
     "/resend-verification",
+    authRateLimiter,
     authController.resendVerification
 );
 
 router.post(
     "/forgot-password",
+    authRateLimiter,
     authController.forgotPassword
 );
 
 router.post(
     "/reset-password",
+    authRateLimiter,
     authController.resetPassword
 );
 
@@ -84,6 +92,7 @@ router.get(
 
 router.patch("/me", protect, authController.updateProfile);
 router.patch("/me/password", protect, authController.changePassword);
+router.patch("/me/location", protect, authController.updateLocation);
 
 /**
  * =========================

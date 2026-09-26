@@ -14,7 +14,7 @@ export const createPropertySchema = z.object({
     title: z.string().min(3).max(150),
     description: z.string().min(10).max(3000),
     propertyType: propertyTypeEnum,
-    price: z.coerce.number().positive(),
+    price: z.coerce.number().positive("Price must be greater than 0").max(100000000, "Price cannot exceed 100,000,000"),
     bedrooms: z.coerce.number().int().min(0),
     bathrooms: z.coerce.number().int().min(0),
     areaSqFt: z.coerce.number().positive().optional(),
@@ -23,8 +23,21 @@ export const createPropertySchema = z.object({
 });
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
 
-export const updatePropertySchema = createPropertySchema.partial();
+export const updatePropertySchema = createPropertySchema
+    .omit({ address: true })
+    .partial()
+    .extend({ address: addressSchema.optional() });
 export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
+
+export const nearbyQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(50).default(10),
+    propertyType: propertyTypeEnum.optional(),
+    minPrice: z.coerce.number().min(0).optional(),
+    maxPrice: z.coerce.number().min(0).optional(),
+    bedrooms: z.coerce.number().int().min(0).optional(),
+});
+export type NearbyQuery = z.infer<typeof nearbyQuerySchema>;
 
 export const listPropertiesQuerySchema = z.object({
     page: z.coerce.number().int().min(1).default(1),

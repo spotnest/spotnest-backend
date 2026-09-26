@@ -14,6 +14,7 @@ import {
     rejectVerificationSchema,
     updateProfileSchema,
     changePasswordSchema,
+    updateLocationSchema,
 } from "./validation.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -67,7 +68,15 @@ const signup = async (
     try {
         const data = signupSchema.parse(req.body);
 
-        const result = await authService.register(data);
+        const result = await authService.register(
+            data,
+            req.file
+                ? {
+                      buffer: req.file.buffer,
+                      mimetype: req.file.mimetype,
+                  }
+                : undefined
+        );
 
         res.status(201).json({
             success: true,
@@ -151,17 +160,34 @@ const verifyEmail = async (
 
         const result = await authService.verifyEmail(data);
 
-        setAuthCookies(
-            res,
-            result.token,
-            result.refreshToken
-        );
+        // Normal users receive authentication tokens after
+        // successful email verification.
+        //
+        // Owners do NOT receive tokens here.
+        // They must first complete document verification
+        // and receive admin approval.
+        if ("token" in result) {
+            setAuthCookies(
+                res,
+                result.token,
+                result.refreshToken
+            );
 
+            res.status(200).json({
+                success: true,
+                data: {
+                    user: result.user,
+                },
+            });
+
+            return;
+        }
+
+        // Owner email verification succeeds, but the owner
+        // remains unauthenticated until admin approval.
         res.status(200).json({
             success: true,
-            data: {
-                user: result.user,
-            },
+            data: result,
         });
     } catch (err) {
         next(err);
@@ -242,11 +268,13 @@ const listUsers = async (
 };
 
 const logout = async (
-    _req: Request,
+    req: Request,
     res: Response,
     next: NextFunction
 ): Promise<void> => {
     try {
+        const refreshToken = req.cookies?.refreshToken;
+        await authService.logout(refreshToken);
         clearAuthCookies(res);
 
         res.status(200).json({
@@ -263,6 +291,16 @@ const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction
         const data = updateProfileSchema.parse(req.body);
         res.status(200).json({ success: true, data: await authService.updateProfile(req.user!.id, data as { name?: string; phone?: string }) });
     } catch (err) { next(err); }
+};
+
+const updateLocation = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const data = updateLocationSchema.parse(req.body);
+        const result = await authService.updateLocation(req.user!.id, data);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
 };
 
 const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -337,7 +375,7 @@ const listPendingVerifications = async (
         const result =
             await authService.listPendingVerifications();
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -351,11 +389,10 @@ const getIdDocumentUrl = async (
     try {
         const result =
             await authService.getIdDocumentUrl(
-                req.params.userId as string,
-                req.user!.id
+               req.params.userId as string
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -373,7 +410,7 @@ const approveVerification = async (
                 req.user!.id
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -395,7 +432,7 @@ const rejectVerification = async (
                 reason
             );
 
-        res.status(200).json(result);
+        res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
@@ -412,6 +449,7 @@ const authController = {
     listUsers,
     logout,
     updateProfile,
+    updateLocation,
     changePassword,
     uploadProfileImage,
     uploadIdVerification,

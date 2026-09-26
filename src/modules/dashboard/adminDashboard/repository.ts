@@ -14,7 +14,7 @@ const getOverview = async () => {
         User.countDocuments(),
         User.countDocuments({ role: UserRole.OWNER }),
         User.countDocuments({ verificationStatus: "pending" }),
-        User.countDocuments({ role: UserRole.OWNER, isVerified: false }),
+        User.countDocuments({ role: UserRole.OWNER, verificationStatus: { $in: ["pending", "unsubmitted"] } }),
         Property.countDocuments(),
         Property.countDocuments({ status: "active" }),
     ]);

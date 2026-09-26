@@ -7,6 +7,7 @@ import {
     updatePropertySchema,
     listPropertiesQuerySchema,
     adminListPropertiesQuerySchema,
+    nearbyQuerySchema,
 } from "./validation.js";
 
 
@@ -49,6 +50,16 @@ export const listProperties = async (req: Request, res: Response, next: NextFunc
     }
 };
 
+export const listNearby = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const query = nearbyQuerySchema.parse(req.query);
+        const result = await propertyService.listNearbyProperties(req.user!.id, query);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getProperty = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const property = await propertyService.getPublicPropertyById(req.params.id as string);
@@ -62,6 +73,15 @@ export const listMyProperties = async (req: AuthRequest, res: Response, next: Ne
     try {
         const properties = await propertyService.listOwnerProperties(req.user!.id);
         res.status(200).json(properties);
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getMyProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const property = await propertyService.getMyPropertyById(req.params.id as string, req.user!.id);
+        res.status(200).json(property);
     } catch (err) {
         next(err);
     }
