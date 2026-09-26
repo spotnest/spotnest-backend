@@ -389,7 +389,7 @@ const getIdDocumentUrl = async (
     try {
         const result =
             await authService.getIdDocumentUrl(
-               req.user!.id
+               req.params.userId as string
             );
 
         res.status(200).json({ success: true, data: result });
