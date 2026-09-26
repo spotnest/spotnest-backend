@@ -23,9 +23,8 @@ export const geocode = async (query: string): Promise<GeocodeResult | null> => {
 
     const userAgent = process.env.GEOCODER_USER_AGENT;
     if (!userAgent) {
-        // Missing runtime config is a server problem, not the user's input —
-        // surface the same "try again" path the rest of this module uses for
-        // a down provider rather than leaking a generic 500.
+        // Missing runtime config is a server problem, not the user's input.
+        console.error("[GEOCODE_CONFIG] GEOCODER_USER_AGENT is not configured");
         throw new AppError(503, "Location lookup is temporarily unavailable. Please try again.");
     }
 

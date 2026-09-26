@@ -234,7 +234,7 @@ const findPendingVerifications = async (): Promise<
         verificationStatus: "pending",
     })
         .select(
-            "name email phone status isVerified verificationStatus created_at verificationSubmittedAt"
+            "name email phone status isVerified verificationStatus created_at verificationSubmittedAt +idDocumentPublicId +idDocumentResourceType +idDocumentFormat"
         )
         .sort({
             verificationSubmittedAt: -1,

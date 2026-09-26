@@ -47,14 +47,31 @@ const getDashboard = async (tenantId: string) => {
 const getMaintenance = async (tenantId: string) => {
     const rental = await getRentalOrNull(tenantId);
     if (!rental) return { rental: null, requests: [] };
-    return { rental: rentalResponse(rental), requests: (await repository.findMaintenance(tenantId, rental._id.toString())).map(maintenanceResponse) };
+    return {
+        rental: rentalResponse(rental),
+        requests: (await repository.findMaintenance(tenantId, rental._id.toString()))
+            .map(maintenanceResponse)
+    };
 };
 
 const createMaintenance = async (tenantId: string, input: CreateMaintenanceInput) => {
     const rental = await getRental(tenantId);
     const request = await repository.createMaintenance({ rental: rental._id, property: rental.property._id, tenant: rental.tenant, owner: rental.owner._id, title: input.title, description: input.description, priority: input.priority, ...(input.category ? { category: input.category } : {}) });
-    await notificationService.createNotification({ recipient: rental.owner._id.toString(), title: "New maintenance request", message: `${input.title} was reported by your tenant.`, type: "system", referenceId: request._id.toString(), referenceType: "property" });
+    await notificationService.createNotification({
+        recipient: rental.owner._id.toString(),
+        title: "New maintenance request",
+        message: `${input.title} was reported by your tenant.`,
+        type: "system",
+        referenceId: request._id.toString(),
+        referenceType: "property"
+    });
     return maintenanceResponse(request);
 };
 
-export default { getDashboard, getRental: async (tenantId: string) => { const rental = await getRentalOrNull(tenantId); return rental ? rentalResponse(rental) : null; }, getPayments, getMaintenance, createMaintenance };
+export default {
+    getDashboard, getRental: async (tenantId: string) => {
+        const rental = await getRentalOrNull(tenantId);
+        return rental ? rentalResponse(rental) : null;
+    },
+    getPayments, getMaintenance, createMaintenance
+};

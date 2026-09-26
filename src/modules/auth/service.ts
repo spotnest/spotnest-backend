@@ -1132,34 +1132,43 @@ const listPendingVerifications =
             verificationStatus: string;
             created_at: Date;
             verificationSubmittedAt?: Date;
+            documentUrl?: string;
+            documentFormat?: "jpg" | "png" | "pdf";
         }>
     > => {
         const users =
             await authRepository.findPendingVerifications();
-return users.map((user) => ({
-    id: user._id.toString(),
-    name: user.name,
-    email: user.email,
+        return Promise.all(users.map(async (user) => {
+            let document: { url: string } | undefined;
+            if (
+                user.idDocumentPublicId &&
+                user.idDocumentResourceType &&
+                user.idDocumentFormat
+            ) {
+                document = await getSignedIdDocumentUrl(
+                    user.idDocumentPublicId,
+                    user.idDocumentResourceType,
+                    user.idDocumentFormat
+                );
+            }
 
-    ...(user.phone
-        ? { phone: user.phone }
-        : {}),
-
-    status: user.status,
-    isVerified: user.isVerified,
-
-    verificationStatus:
-        user.verificationStatus ?? "unsubmitted",
-
-    created_at: user.created_at,
-
-    ...(user.verificationSubmittedAt
-        ? {
-              verificationSubmittedAt:
-                  user.verificationSubmittedAt,
-          }
-        : {}),
-}));
+            return {
+                id: user._id.toString(),
+                name: user.name,
+                email: user.email,
+                ...(user.phone ? { phone: user.phone } : {}),
+                status: user.status,
+                isVerified: user.isVerified,
+                verificationStatus: user.verificationStatus ?? "unsubmitted",
+                created_at: user.created_at,
+                ...(user.verificationSubmittedAt
+                    ? { verificationSubmittedAt: user.verificationSubmittedAt }
+                    : {}),
+                ...(document
+                    ? { documentUrl: document.url, documentFormat: user.idDocumentFormat }
+                    : {}),
+            };
+        }));
 
     };
 
