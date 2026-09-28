@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js";
+import { UserRole } from "../auth/type.js";
 import notificationRepository from "./repository.js";
 import type {
     INotification,
@@ -44,8 +45,8 @@ const toResponse = (notification: INotification): NotificationResponse => {
 const createNotification = async (input: CreateNotificationInput): Promise<NotificationResponse> =>
     toResponse(await notificationRepository.create(input));
 
-const getNotifications = async (recipient: string, query: ListNotificationsQuery) => {
-    const { notifications, total } = await notificationRepository.findByRecipient(recipient, query.page, query.limit);
+const getNotifications = async (recipient: string, role: UserRole, query: ListNotificationsQuery) => {
+    const { notifications, total } = await notificationRepository.findByRecipient(recipient, role, query.page, query.limit);
     return {
         notifications: notifications.map(toResponse),
         pagination: {
@@ -57,23 +58,23 @@ const getNotifications = async (recipient: string, query: ListNotificationsQuery
     };
 };
 
-const getUnreadCount = async (recipient: string): Promise<{ count: number }> => ({
-    count: await notificationRepository.countUnreadByRecipient(recipient),
+const getUnreadCount = async (recipient: string, role: UserRole): Promise<{ count: number }> => ({
+    count: await notificationRepository.countUnreadByRecipient(recipient, role),
 });
 
-const markAsRead = async (id: string, recipient: string): Promise<NotificationResponse> => {
-    const notification = await notificationRepository.markReadForRecipient(id, recipient);
+const markAsRead = async (id: string, recipient: string, role: UserRole): Promise<NotificationResponse> => {
+    const notification = await notificationRepository.markReadForRecipient(id, recipient, role);
     if (!notification) throw new AppError(404, "Notification not found");
     return toResponse(notification);
 };
 
-const markAllAsRead = async (recipient: string): Promise<{ message: string; modifiedCount: number }> => ({
+const markAllAsRead = async (recipient: string, role: UserRole): Promise<{ message: string; modifiedCount: number }> => ({
     message: "Notifications marked as read",
-    modifiedCount: await notificationRepository.markAllReadForRecipient(recipient),
+    modifiedCount: await notificationRepository.markAllReadForRecipient(recipient, role),
 });
 
-const deleteNotification = async (id: string, recipient: string): Promise<{ message: string }> => {
-    const deleted = await notificationRepository.deleteForRecipient(id, recipient);
+const deleteNotification = async (id: string, recipient: string, role: UserRole): Promise<{ message: string }> => {
+    const deleted = await notificationRepository.deleteForRecipient(id, recipient, role);
     if (!deleted) throw new AppError(404, "Notification not found");
     return { message: "Notification deleted" };
 };
