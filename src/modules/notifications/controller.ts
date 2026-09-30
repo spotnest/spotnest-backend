@@ -6,7 +6,7 @@ import { listNotificationsQuerySchema, notificationIdSchema } from "./validation
 const listNotifications = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const query = listNotificationsQuerySchema.parse(req.query);
-        const data = await notificationService.getNotifications(req.user!.id, query);
+        const data = await notificationService.getNotifications(req.user!.id, req.user!.role, query);
         res.status(200).json({ success: true, data });
     } catch (error) {
         next(error);
@@ -15,7 +15,7 @@ const listNotifications = async (req: AuthRequest, res: Response, next: NextFunc
 
 const getUnreadCount = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const data = await notificationService.getUnreadCount(req.user!.id);
+        const data = await notificationService.getUnreadCount(req.user!.id, req.user!.role);
         res.status(200).json({ success: true, data });
     } catch (error) {
         next(error);
@@ -25,7 +25,7 @@ const getUnreadCount = async (req: AuthRequest, res: Response, next: NextFunctio
 const markAsRead = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const id = notificationIdSchema.parse(req.params.id);
-        const data = await notificationService.markAsRead(id, req.user!.id);
+        const data = await notificationService.markAsRead(id, req.user!.id, req.user!.role);
         res.status(200).json({ success: true, data });
     } catch (error) {
         next(error);
@@ -34,7 +34,7 @@ const markAsRead = async (req: AuthRequest, res: Response, next: NextFunction): 
 
 const markAllAsRead = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const data = await notificationService.markAllAsRead(req.user!.id);
+        const data = await notificationService.markAllAsRead(req.user!.id, req.user!.role);
         res.status(200).json({ success: true, data });
     } catch (error) {
         next(error);
@@ -44,7 +44,7 @@ const markAllAsRead = async (req: AuthRequest, res: Response, next: NextFunction
 const deleteNotification = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     try {
         const id = notificationIdSchema.parse(req.params.id);
-        const data = await notificationService.deleteNotification(id, req.user!.id);
+        const data = await notificationService.deleteNotification(id, req.user!.id, req.user!.role);
         res.status(200).json({ success: true, data });
     } catch (error) {
         next(error);
