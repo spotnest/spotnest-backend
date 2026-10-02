@@ -10,7 +10,12 @@ export const notificationTypes = [
 ] as const;
 
 export type NotificationType = (typeof notificationTypes)[number];
-export type NotificationReferenceType = "user" | "property" | "conversation";
+
+export type NotificationReferenceType =
+    | "user"
+    | "property"
+    | "conversation"
+    | "visit";
 
 export interface NotificationData {
     conversationId?: string;
