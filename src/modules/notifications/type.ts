@@ -5,13 +5,16 @@ export const notificationTypes = [
     "owner_approved",
     "owner_rejected",
     "property_status",
+    "chat_message",
     "system",
 ] as const;
 
 export type NotificationType = (typeof notificationTypes)[number];
+
 export type NotificationReferenceType =
     | "user"
     | "property"
+    | "conversation"
     | "visit";
 
 export interface INotification extends Document {

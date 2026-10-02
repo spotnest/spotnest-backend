@@ -18,17 +18,20 @@ interface CreateNotificationInput {
     referenceType?: NotificationReferenceType;
 }
 
-const targetUrlFor = (notification: INotification): string | undefined => {
+const targetUrlFor = (notification: INotification, role?: UserRole): string | undefined => {
     if (notification.type === "owner_approval_request") return "/requests/owner-approvals";
     if (notification.type === "owner_approved" || notification.type === "owner_rejected") return "/owner/dashboard";
     if (notification.type === "property_status" && notification.referenceId) {
         return `/properties/${notification.referenceId.toString()}`;
     }
+    if (notification.type === "chat_message" && notification.referenceId && (role === UserRole.TENANT || role === UserRole.OWNER)) {
+        return `/${role}/dashboard/chat?conversationId=${notification.referenceId.toString()}`;
+    }
     return undefined;
 };
 
-const toResponse = (notification: INotification): NotificationResponse => {
-    const targetUrl = targetUrlFor(notification);
+const toResponse = (notification: INotification, role?: UserRole): NotificationResponse => {
+    const targetUrl = targetUrlFor(notification, role);
     return {
         id: notification._id.toString(),
         title: notification.title,
@@ -48,7 +51,7 @@ const createNotification = async (input: CreateNotificationInput): Promise<Notif
 const getNotifications = async (recipient: string, role: UserRole, query: ListNotificationsQuery) => {
     const { notifications, total } = await notificationRepository.findByRecipient(recipient, role, query.page, query.limit);
     return {
-        notifications: notifications.map(toResponse),
+        notifications: notifications.map((notification) => toResponse(notification, role)),
         pagination: {
             page: query.page,
             limit: query.limit,
@@ -65,7 +68,7 @@ const getUnreadCount = async (recipient: string, role: UserRole): Promise<{ coun
 const markAsRead = async (id: string, recipient: string, role: UserRole): Promise<NotificationResponse> => {
     const notification = await notificationRepository.markReadForRecipient(id, recipient, role);
     if (!notification) throw new AppError(404, "Notification not found");
-    return toResponse(notification);
+    return toResponse(notification, role);
 };
 
 const markAllAsRead = async (recipient: string, role: UserRole): Promise<{ message: string; modifiedCount: number }> => ({

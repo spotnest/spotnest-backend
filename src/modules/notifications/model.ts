@@ -9,19 +9,47 @@ const notificationSchema = new Schema<INotification>(
             required: true,
             index: true,
         },
-        title: { type: String, required: true, maxlength: 160 },
-        message: { type: String, required: true, maxlength: 1_000 },
-        type: { type: String, enum: notificationTypes, required: true },
-        isRead: { type: Boolean, default: false },
-        referenceId: { type: Schema.Types.ObjectId },
-        referenceType: { type: String, enum: ["user", "property", "visit"] },
+        title: {
+            type: String,
+            required: true,
+            maxlength: 160,
         },
-    { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } },
+        message: {
+            type: String,
+            required: true,
+            maxlength: 1_000,
+        },
+        type: {
+            type: String,
+            enum: notificationTypes,
+            required: true,
+        },
+        isRead: {
+            type: Boolean,
+            default: false,
+        },
+        referenceId: {
+            type: Schema.Types.ObjectId,
+        },
+        referenceType: {
+            type: String,
+            enum: ["user", "property", "conversation", "visit"],
+        },
+    },
+    {
+        timestamps: {
+            createdAt: "created_at",
+            updatedAt: "updated_at",
+        },
+    },
 );
 
 notificationSchema.index({ recipient: 1, created_at: -1 });
 notificationSchema.index({ recipient: 1, isRead: 1 });
 
-const Notification = mongoose.model<INotification>("Notification", notificationSchema);
+const Notification = mongoose.model<INotification>(
+    "Notification",
+    notificationSchema,
+);
 
 export default Notification;
