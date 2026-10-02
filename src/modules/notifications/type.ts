@@ -12,6 +12,12 @@ export const notificationTypes = [
 export type NotificationType = (typeof notificationTypes)[number];
 export type NotificationReferenceType = "user" | "property" | "conversation";
 
+export interface NotificationData {
+    conversationId?: string;
+    propertyId?: string;
+    senderId?: string;
+}
+
 export interface INotification extends Document {
     recipient: Types.ObjectId;
     title: string;
@@ -20,6 +26,8 @@ export interface INotification extends Document {
     isRead: boolean;
     referenceId?: Types.ObjectId;
     referenceType?: NotificationReferenceType;
+    data?: NotificationData;
+    count: number;
     created_at: Date;
     updated_at: Date;
 }
@@ -33,5 +41,7 @@ export interface NotificationResponse {
     createdAt: string;
     referenceId?: string;
     referenceType?: NotificationReferenceType;
+    data?: NotificationData;
+    count?: number;
     targetUrl?: string;
 }

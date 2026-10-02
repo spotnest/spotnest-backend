@@ -1,11 +1,13 @@
 import { AppError } from "../../shared/errors/AppError.js";
 import { UserRole } from "../auth/type.js";
+import authRepository from "../auth/repository.js";
 import notificationRepository from "./repository.js";
 import type {
     INotification,
     NotificationReferenceType,
     NotificationResponse,
     NotificationType,
+    NotificationData,
 } from "./type.js";
 import type { ListNotificationsQuery } from "./validation.js";
 
@@ -24,8 +26,13 @@ const targetUrlFor = (notification: INotification, role?: UserRole): string | un
     if (notification.type === "property_status" && notification.referenceId) {
         return `/properties/${notification.referenceId.toString()}`;
     }
-    if (notification.type === "chat_message" && notification.referenceId && (role === UserRole.TENANT || role === UserRole.OWNER)) {
-        return `/${role}/dashboard/chat?conversationId=${notification.referenceId.toString()}`;
+    if (notification.type === "chat_message") {
+        const conversationId = notification.data?.conversationId ?? notification.referenceId?.toString();
+        if (!conversationId) return undefined;
+        if (role === UserRole.USER) return `/messages?conversationId=${conversationId}`;
+        if (role === UserRole.TENANT || role === UserRole.OWNER) {
+            return `/${role}/dashboard/chat?conversationId=${conversationId}`;
+        }
     }
     return undefined;
 };
@@ -41,12 +48,33 @@ const toResponse = (notification: INotification, role?: UserRole): NotificationR
         createdAt: notification.created_at.toISOString(),
         ...(notification.referenceId ? { referenceId: notification.referenceId.toString() } : {}),
         ...(notification.referenceType ? { referenceType: notification.referenceType } : {}),
+        ...(notification.data ? { data: notification.data } : {}),
+        ...(notification.count > 1 ? { count: notification.count } : {}),
         ...(targetUrl ? { targetUrl } : {}),
     };
 };
 
 const createNotification = async (input: CreateNotificationInput): Promise<NotificationResponse> =>
     toResponse(await notificationRepository.create(input));
+
+const createOrUpdateChatMessageNotification = async (input: {
+    recipient: string;
+    title: string;
+    message: string;
+    data: NotificationData & { conversationId: string };
+}): Promise<NotificationResponse> => {
+    const notification = await notificationRepository.upsertUnreadChatMessage({
+        recipient: input.recipient,
+        title: input.title,
+        message: input.message,
+        notificationData: input.data,
+    });
+    const recipient = await authRepository.findById(input.recipient);
+    return toResponse(notification, recipient?.role);
+};
+
+const markChatMessageRead = async (recipient: string, conversationId: string): Promise<number> =>
+    notificationRepository.markChatMessageRead(recipient, conversationId);
 
 const getNotifications = async (recipient: string, role: UserRole, query: ListNotificationsQuery) => {
     const { notifications, total } = await notificationRepository.findByRecipient(recipient, role, query.page, query.limit);
@@ -84,6 +112,8 @@ const deleteNotification = async (id: string, recipient: string, role: UserRole)
 
 export default {
     createNotification,
+    createOrUpdateChatMessageNotification,
+    markChatMessageRead,
     getNotifications,
     getUnreadCount,
     markAsRead,

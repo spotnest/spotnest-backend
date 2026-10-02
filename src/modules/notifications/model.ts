@@ -15,6 +15,8 @@ const notificationSchema = new Schema<INotification>(
         isRead: { type: Boolean, default: false },
         referenceId: { type: Schema.Types.ObjectId },
         referenceType: { type: String, enum: ["user", "property", "conversation"] },
+        data: { type: Schema.Types.Mixed },
+        count: { type: Number, default: 1 },
     },
     { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } },
 );

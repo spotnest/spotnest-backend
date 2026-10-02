@@ -41,6 +41,16 @@ export interface IProperty extends Document {
     updated_at: Date;
 }
 
+export interface PublicPropertyOwner {
+    _id: Types.ObjectId;
+    name: string;
+    image?: string;
+}
+
+export type PublicProperty = Omit<IProperty, "owner"> & {
+    owner: PublicPropertyOwner | null;
+};
+
 export interface AdminPropertyOwner {
     _id: Types.ObjectId;
     name: string;

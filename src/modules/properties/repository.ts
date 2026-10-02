@@ -1,5 +1,5 @@
 import Property from "./model.js";
-import type { AdminProperty, AdminPropertyOwner, GeoPoint, IProperty, PropertyStatus, PropertyType } from "./type.js";
+import type { AdminProperty, AdminPropertyOwner, GeoPoint, IProperty, PropertyStatus, PropertyType, PublicProperty, PublicPropertyOwner } from "./type.js";
 import type { AdminListPropertiesQuery, ListPropertiesQuery, NearbyQuery } from "./validation.js";
 
 export const NEARBY_RADIUS_METERS = 10_000; // 10 km, fixed
@@ -35,6 +35,13 @@ const createProperty = async (data: CreatePropertyData): Promise<IProperty> => {
 
 const findById = async (id: string): Promise<IProperty | null> => {
     return Property.findById(id);
+};
+
+const findPublicById = async (id: string): Promise<PublicProperty | null> => {
+    const property = await Property.findById(id)
+        .populate<{ owner: PublicPropertyOwner | null }>("owner", "name image")
+        .lean();
+    return property as PublicProperty | null;
 };
 
 const findByOwner = async (ownerId: string): Promise<IProperty[]> => {
@@ -184,6 +191,7 @@ const deletePropertyById = async (id: string): Promise<void> => {
 const propertyRepository = {
     createProperty,
     findById,
+    findPublicById,
     findByOwner,
     findMany,
     findManyForAdmin,
