@@ -6,6 +6,12 @@ import notificationService from "../notifications/service.js";
 import chatRepository from "./repository.js";
 import type { CreateConversationInput, ListMessagesQuery, SendMessageInput } from "./validation.js";
 import type { ConversationResponse, IConversation, IMessage, MessageResponse, PopulatedConversation } from "./type.js";
+import type { NotificationResponse } from "../notifications/type.js";
+
+interface SendMessageResult {
+    message: MessageResponse;
+    notification?: NotificationResponse;
+}
 
 const isRenterRole = (role: UserRole) =>
     role === UserRole.TENANT || role === UserRole.USER;
@@ -85,6 +91,7 @@ const createOrGetConversation = async (userId: string, role: UserRole, input: Cr
     }
 
     const conversation = await chatRepository.createOrFindConversation(input.propertyId, tenantId, ownerId);
+    console.log("[chat] resolved conversation users", { propertyId: input.propertyId, tenantId, ownerId });
     const populated = await chatRepository.findPopulatedById(conversation._id.toString());
     if (!populated) throw new AppError(500, "Unable to load conversation");
     return toConversationResponse(populated, userId, 0)!;
@@ -113,7 +120,14 @@ const listMessages = async (conversationId: string, userId: string, role: UserRo
     return messages.map(toMessageResponse);
 };
 
-const sendMessage = async (conversationId: string, userId: string, role: UserRole, input: SendMessageInput): Promise<MessageResponse> => {
+const sendMessage = async (
+    conversationId: string,
+    userId: string,
+    role: UserRole,
+    senderName: string,
+    input: SendMessageInput,
+    isRecipientViewing: (recipientId: string) => Promise<boolean>,
+): Promise<SendMessageResult> => {
     const { conversation, tenantId, ownerId } = await assertConversationParticipant(conversationId, userId, role);
     const recipientId = userId === tenantId ? ownerId : tenantId;
     const sentAt = new Date();
@@ -125,25 +139,52 @@ const sendMessage = async (conversationId: string, userId: string, role: UserRol
     });
     await chatRepository.updateLastMessage(conversationId, input.message, sentAt);
 
+    let notification: NotificationResponse | undefined;
+    let recipientIsViewing = false;
     try {
-        await notificationService.createNotification({
-            recipient: recipientId,
-            title: "New chat message",
-            message: input.message.slice(0, 160),
-            type: "chat_message",
-            referenceId: conversation._id.toString(),
-            referenceType: "conversation",
-        });
+        recipientIsViewing = await isRecipientViewing(recipientId);
     } catch (error) {
-        console.error("Unable to create chat notification", error);
+        console.error("Unable to check recipient chat presence", error instanceof Error ? error.stack : error);
     }
 
-    return toMessageResponse(message);
+    if (recipientIsViewing) {
+        try {
+            await chatRepository.markMessagesRead(conversationId, recipientId);
+            await notificationService.markChatMessageRead(recipientId, conversationId);
+        } catch (error) {
+            console.error("Unable to mark active chat as read", error instanceof Error ? error.stack : error);
+        }
+    } else {
+        try {
+            notification = await notificationService.createOrUpdateChatMessageNotification({
+                recipient: recipientId,
+                title: `New message from ${senderName}`,
+                message: input.message.slice(0, 80),
+                data: {
+                    conversationId,
+                    propertyId: conversation.propertyId.toString(),
+                    senderId: userId,
+                },
+            });
+        } catch (error) {
+            console.error("Unable to update chat notification state", error instanceof Error ? error.stack : error);
+        }
+    }
+
+    const response = toMessageResponse(message);
+    return {
+        message: recipientIsViewing ? { ...response, isRead: true } : response,
+        ...(notification ? { notification } : {}),
+    };
 };
 
 const markMessagesRead = async (conversationId: string, userId: string, role: UserRole): Promise<{ modifiedCount: number }> => {
     await assertConversationParticipant(conversationId, userId, role);
-    return { modifiedCount: await chatRepository.markMessagesRead(conversationId, userId) };
+    const [modifiedCount] = await Promise.all([
+        chatRepository.markMessagesRead(conversationId, userId),
+        notificationService.markChatMessageRead(userId, conversationId),
+    ]);
+    return { modifiedCount };
 };
 
 export default { createOrGetConversation, listConversations, listMessages, sendMessage, markMessagesRead };

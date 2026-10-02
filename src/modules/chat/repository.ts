@@ -4,6 +4,7 @@ import Message from "./messageModel.js";
 import type { IConversation, IMessage, PopulatedConversation } from "./type.js";
 
 const createOrFindConversation = async (propertyId: string, tenantId: string, ownerId: string): Promise<IConversation> => {
+    console.log("[chat] conversation participants", { propertyId, tenantId, ownerId });
     try {
         return (await Conversation.findOneAndUpdate(
             { propertyId, tenantId, ownerId },
@@ -19,11 +20,13 @@ const createOrFindConversation = async (propertyId: string, tenantId: string, ow
 };
 
 const findByParticipant = async (userId: string): Promise<PopulatedConversation[]> => {
-    const result = await Conversation.find({ participants: userId })
+    const result = await Conversation.find({
+        $or: [{ participants: userId }, { tenantId: userId }, { ownerId: userId }],
+    })
         .populate("propertyId", "title images")
         .populate("tenantId", "name image")
         .populate("ownerId", "name image")
-        .sort({ lastMessageAt: -1, updated_at: -1 })
+        .sort({ updated_at: -1 })
         .lean();
     return result as unknown as PopulatedConversation[];
 };

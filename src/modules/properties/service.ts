@@ -4,7 +4,7 @@ import { AppError } from "../../shared/errors/AppError.js";
 import { geocode } from "../../shared/utils/geocode.js";
 import { uploadImage, deleteImage } from "../../shared/utils/cloudinary.js";
 import { UserRole } from "../auth/type.js";
-import type { AdminProperty, IProperty, PropertyAddress } from "./type.js";
+import type { AdminProperty, IProperty, PropertyAddress, PublicProperty } from "./type.js";
 import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
 import type {
@@ -150,8 +150,8 @@ const listNearbyProperties = async (userId: string, query: NearbyQuery) => {
     };
 };
 
-const getPublicPropertyById = async (id: string): Promise<IProperty> => {
-    const property = await propertyRepository.findById(id);
+const getPublicPropertyById = async (id: string): Promise<PublicProperty> => {
+    const property = await propertyRepository.findPublicById(id);
     if (!property || property.status !== "active") {
         throw new AppError(404, "Property not found");
     }
