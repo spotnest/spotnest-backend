@@ -55,6 +55,56 @@ import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
 
 // -----------------------------------------------------
+// OWNER APPROVAL REQUEST HELPER
+// -----------------------------------------------------
+
+const submitOwnerForAdminReview = async (
+    user: IUser
+): Promise<void> => {
+    await authRepository.markVerificationPending(
+        user._id.toString()
+    );
+
+    const adminIds =
+        await authRepository.findAdminIds();
+
+    await Promise.all(
+        adminIds.map((adminId) =>
+            notificationService.createNotification({
+                recipient: adminId,
+                title: "New owner approval request",
+                message: `${user.name} submitted an owner verification document for approval.`,
+                type: "owner_approval_request",
+                referenceId: user._id.toString(),
+                referenceType: "user",
+            })
+        )
+    );
+
+    settingsRepository
+        .getGlobal()
+        .then((settings) => {
+            if (settings.newOwnerRegistrationAlerts) {
+                sendOwnerRegistrationAlert(
+                    user.email,
+                    user.name
+                ).catch((err) => {
+                    console.error(
+                        "[EMAIL_FAILED] owner registration alert:",
+                        err
+                    );
+                });
+            }
+        })
+        .catch((err) => {
+            console.error(
+                "[SETTINGS_FAILED] owner registration alert:",
+                err
+            );
+        });
+};
+
+// -----------------------------------------------------
 // REGISTER
 // -----------------------------------------------------
 
@@ -85,8 +135,8 @@ const register = async (
         );
     }
 
-    // Owner registration requires the certification document
-    // during registration itself.
+    // Owner registration requires the
+    // verification document during registration.
     if (
         data.role === UserRole.OWNER &&
         !file
@@ -156,58 +206,20 @@ const register = async (
                     file.mimetype
                 );
 
+            /*
+             * IMPORTANT:
+             *
+             * The document is stored here, but the owner
+             * must NOT become "pending" yet.
+             *
+             * Email verification must happen first.
+             */
             await authRepository.submitVerificationDocument(
                 user._id.toString(),
                 uploadedDocument.publicId,
                 uploadedDocument.resourceType,
                 uploadedDocument.format
             );
-
-            // -------------------------------------------------
-            // ADMIN NOTIFICATION
-            // -------------------------------------------------
-
-            const adminIds =
-                await authRepository.findAdminIds();
-
-            await Promise.all(
-                adminIds.map((adminId) =>
-                    notificationService.createNotification({
-                        recipient: adminId,
-                        title: "New owner approval request",
-                        message: `${user.name} submitted an ID document for approval.`,
-                        type: "owner_approval_request",
-                        referenceId:
-                            user._id.toString(),
-                        referenceType: "user",
-                    })
-                )
-            );
-
-            // Best-effort owner registration alert email.
-            settingsRepository
-                .getGlobal()
-                .then((currentSettings) => {
-                    if (
-                        currentSettings.newOwnerRegistrationAlerts
-                    ) {
-                        sendOwnerRegistrationAlert(
-                            user.email,
-                            user.name
-                        ).catch((err) => {
-                            console.error(
-                                "[EMAIL_FAILED] owner registration alert:",
-                                err
-                            );
-                        });
-                    }
-                })
-                .catch((err) => {
-                    console.error(
-                        "[SETTINGS_FAILED] owner registration alert:",
-                        err
-                    );
-                });
         }
 
         // -------------------------------------------------
@@ -215,6 +227,7 @@ const register = async (
         // -------------------------------------------------
 
         const otp = generateOtp();
+
         const otpHash = await hashOtp(otp);
 
         const otpExpiry = new Date(
@@ -242,6 +255,15 @@ const register = async (
             await authRepository.markVerified(
                 user._id.toString()
             );
+
+            /*
+             * If email verification is globally disabled,
+             * the owner still needs to enter the admin
+             * approval state.
+             */
+            if (data.role === UserRole.OWNER) {
+                await submitOwnerForAdminReview(user);
+            }
         }
     } catch (error) {
         // If anything after user creation fails,
@@ -271,6 +293,10 @@ const register = async (
         throw error;
     }
 
+    // -------------------------------------------------
+    // OWNER RESPONSE
+    // -------------------------------------------------
+
     if (data.role === UserRole.OWNER) {
         return {
             message:
@@ -282,6 +308,10 @@ const register = async (
             },
         };
     }
+
+    // -------------------------------------------------
+    // NORMAL USER RESPONSE
+    // -------------------------------------------------
 
     return {
         message:
@@ -336,7 +366,10 @@ const login = async (
     const settings =
         await settingsRepository.getGlobal();
 
-    // Email verification is required for login.
+    // -------------------------------------------------
+    // EMAIL VERIFICATION
+    // -------------------------------------------------
+
     if (
         settings.emailVerificationRequired &&
         !user.isVerified
@@ -348,10 +381,9 @@ const login = async (
     }
 
     // -------------------------------------------------
-    // OWNER APPROVAL REQUIREMENT
+    // OWNER APPROVAL
     // -------------------------------------------------
 
-    // An owner can login ONLY after admin approval.
     if (
         user.role === UserRole.OWNER &&
         user.verificationStatus !== "approved"
@@ -441,7 +473,10 @@ const verifyEmail = async (
         throw genericError();
     }
 
-    // Email verification only.
+    // -------------------------------------------------
+    // EMAIL VERIFICATION ONLY
+    // -------------------------------------------------
+
     await authRepository.markVerified(
         user._id.toString()
     );
@@ -454,21 +489,29 @@ const verifyEmail = async (
     // OWNER
     // -------------------------------------------------
 
-    // Email verification does NOT approve an owner.
-    // The owner must submit certification and wait
-    // for admin approval before receiving login tokens.
     if (user.role === UserRole.OWNER) {
+        /*
+         * Email verification does NOT approve
+         * the owner.
+         *
+         * It only moves the owner from:
+         *
+         * unsubmitted -> pending
+         *
+         * The admin must still approve the document.
+         */
+
+        await submitOwnerForAdminReview(user);
+
         return {
             message:
-                "Email verified. Please submit your owner certification for admin approval.",
+                "Email verified. Your owner registration has been submitted for admin approval.",
             user: {
                 id: user._id.toString(),
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                verificationStatus:
-                    user.verificationStatus ??
-                    "unsubmitted",
+                verificationStatus: "pending",
             },
         };
     }
@@ -477,8 +520,6 @@ const verifyEmail = async (
     // NORMAL USER
     // -------------------------------------------------
 
-    // Normal users can authenticate immediately
-    // after successful email verification.
     return toAuthResponse(user);
 };
 
@@ -523,6 +564,7 @@ const resendVerification = async (
     }
 
     const otp = generateOtp();
+
     const otpHash = await hashOtp(otp);
 
     const otpExpiry = new Date(
@@ -586,6 +628,7 @@ const forgotPassword = async (
     }
 
     const otp = generateOtp();
+
     const otpHash = await hashOtp(otp);
 
     const otpExpiry = new Date(
@@ -1052,6 +1095,13 @@ const submitIdVerification = async (
             resourceType,
             format
         );
+
+        /*
+         * The user is already email verified here,
+         * so this legacy/resubmission endpoint can
+         * immediately enter pending state.
+         */
+        await submitOwnerForAdminReview(user);
     } catch (err) {
         await deleteIdDocument(
             publicId,
@@ -1068,46 +1118,6 @@ const submitIdVerification = async (
             "Failed to save verification document"
         );
     }
-
-    const adminIds =
-        await authRepository.findAdminIds();
-
-    await Promise.all(
-        adminIds.map((adminId) =>
-            notificationService.createNotification({
-                recipient: adminId,
-                title: "New owner approval request",
-                message: `${user.name} submitted an ID document for approval.`,
-                type: "owner_approval_request",
-                referenceId: userId,
-                referenceType: "user",
-            })
-        )
-    );
-
-    settingsRepository
-        .getGlobal()
-        .then((settings) => {
-            if (
-                settings.newOwnerRegistrationAlerts
-            ) {
-                sendOwnerRegistrationAlert(
-                    user.email,
-                    user.name
-                ).catch((err) => {
-                    console.error(
-                        "[EMAIL_FAILED] owner registration alert:",
-                        err
-                    );
-                });
-            }
-        })
-        .catch((err) => {
-            console.error(
-                "[SETTINGS_FAILED] owner registration alert:",
-                err
-            );
-        });
 
     return {
         message:
@@ -1138,43 +1148,59 @@ const listPendingVerifications =
     > => {
         const users =
             await authRepository.findPendingVerifications();
-        return Promise.all(users.map(async (user) => {
-            let document: { url: string } | undefined;
-            if (
-                user.idDocumentPublicId &&
-                user.idDocumentResourceType &&
-                user.idDocumentFormat
-            ) {
-                document = await getSignedIdDocumentUrl(
-                    user.idDocumentPublicId,
-                    user.idDocumentResourceType,
+
+        return Promise.all(
+            users.map(async (user) => {
+                let document:
+                    | { url: string }
+                    | undefined;
+
+                if (
+                    user.idDocumentPublicId &&
+                    user.idDocumentResourceType &&
                     user.idDocumentFormat
-                );
-            }
+                ) {
+                    document =
+                        await getSignedIdDocumentUrl(
+                            user.idDocumentPublicId,
+                            user.idDocumentResourceType,
+                            user.idDocumentFormat
+                        );
+                }
 
-            return {
-                id: user._id.toString(),
-                name: user.name,
-                email: user.email,
-                ...(user.phone ? { phone: user.phone } : {}),
-                status: user.status,
-                isVerified: user.isVerified,
-                verificationStatus: user.verificationStatus ?? "unsubmitted",
-                created_at: user.created_at,
-                ...(user.verificationSubmittedAt
-                    ? { verificationSubmittedAt: user.verificationSubmittedAt }
-                    : {}),
-                ...(document
-                    ? { documentUrl: document.url, documentFormat: user.idDocumentFormat }
-                    : {}),
-            };
-        }));
+                return {
+                    id: user._id.toString(),
+                    name: user.name,
+                    email: user.email,
+                    ...(user.phone
+                        ? { phone: user.phone }
+                        : {}),
+                    status: user.status,
+                    isVerified: user.isVerified,
+                    verificationStatus:
+                        user.verificationStatus ??
+                        "unsubmitted",
+                    created_at: user.created_at,
 
+                    ...(user.verificationSubmittedAt
+                        ? {
+                              verificationSubmittedAt:
+                                  user.verificationSubmittedAt,
+                          }
+                        : {}),
+
+                    ...(document
+                        ? {
+                              documentUrl:
+                                  document.url,
+                              documentFormat:
+                                  user.idDocumentFormat,
+                          }
+                        : {}),
+                };
+            })
+        );
     };
-
-// -----------------------------------------------------
-// GET OWNER ID DOCUMENT
-// -----------------------------------------------------
 
 // -----------------------------------------------------
 // GET OWNER ID DOCUMENT
@@ -1245,6 +1271,17 @@ const approveOwnerVerification =
             throw new AppError(
                 400,
                 "No pending verification request for this user"
+            );
+        }
+
+        /*
+         * Defense-in-depth:
+         * only an email-verified owner can be approved.
+         */
+        if (!user.isVerified) {
+            throw new AppError(
+                400,
+                "Owner email must be verified before approval"
             );
         }
 
@@ -1325,8 +1362,8 @@ const rejectOwnerVerification = async (
     const idResourceType =
         user.idDocumentResourceType;
 
-    // Mark the verification as rejected and
-    // remove document metadata from database.
+    // Mark verification as rejected
+    // and remove document metadata.
     await authRepository.rejectVerification(
         userId,
         adminId,

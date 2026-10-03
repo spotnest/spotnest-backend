@@ -32,7 +32,7 @@ export const requireRole = (...roles: UserRole[]) => {
 };
 
 /**
- * Require an approved owner.
+ * Require an approved and email-verified owner.
  *
  * isVerified = email verification
  * verificationStatus = owner document/admin approval
@@ -55,12 +55,13 @@ export const requireVerifiedOwner = (
     }
 
     if (
+        !req.user.isVerified ||
         req.user.verificationStatus !== "approved"
     ) {
         return next(
             new AppError(
                 403,
-                "Your ID verification must be approved before managing properties"
+                "Your email must be verified and your owner verification must be approved before performing this action"
             )
         );
     }
@@ -72,18 +73,18 @@ export const requireVerifiedOwner = (
  * Require either:
  *
  * - ADMIN
- * - APPROVED OWNER
+ * - APPROVED AND EMAIL-VERIFIED OWNER
  *
  * This middleware is used for property-management
  * operations where admins can manage any property
  * and approved owners can manage their own properties.
  *
  * IMPORTANT:
- * This middleware only checks the user's role and
- * owner verification status.
+ * This middleware only checks the user's role
+ * and owner verification status.
  *
- * Property ownership must still be checked inside
- * the property service/controller.
+ * Property ownership must still be checked
+ * inside the property service/controller.
  */
 export const requireOwnerOrAdmin = (
     req: AuthRequest,
@@ -107,10 +108,12 @@ export const requireOwnerOrAdmin = (
     }
 
     /**
-     * Only approved owners can manage properties.
+     * Only approved and email-verified owners
+     * can manage properties.
      */
     if (
         req.user.role === UserRole.OWNER &&
+        req.user.isVerified &&
         req.user.verificationStatus === "approved"
     ) {
         return next();
@@ -119,7 +122,7 @@ export const requireOwnerOrAdmin = (
     return next(
         new AppError(
             403,
-            "Your ID verification must be approved before managing properties"
+            "Your email must be verified and your owner verification must be approved before performing this action"
         )
     );
 };

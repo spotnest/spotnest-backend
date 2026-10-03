@@ -16,6 +16,10 @@ export interface CreateUserInput {
         | "rejected";
 }
 
+// --------------------------------------------------
+// Create / Delete
+// --------------------------------------------------
+
 const createUser = async (
     data: CreateUserInput
 ): Promise<IUser> => {
@@ -28,6 +32,10 @@ const deleteUser = async (
 ): Promise<void> => {
     await User.findByIdAndDelete(userId);
 };
+
+// --------------------------------------------------
+// Find Users
+// --------------------------------------------------
 
 const findByEmail = async (
     email: string
@@ -65,11 +73,15 @@ const findAllUsers = async (): Promise<IUser[]> => {
         .sort({ created_at: -1 });
 };
 
+// --------------------------------------------------
+// Admins
+// --------------------------------------------------
+
 /**
  * Find admin user IDs.
  *
  * Used by the notification service when a new owner
- * registration/verification request is submitted.
+ * verification request is submitted.
  */
 const findAdminIds = async (): Promise<string[]> => {
     const admins = await User.find({
@@ -78,13 +90,19 @@ const findAdminIds = async (): Promise<string[]> => {
         .select("_id")
         .lean();
 
-    return admins.map((admin) => admin._id.toString());
+    return admins.map((admin) =>
+        admin._id.toString()
+    );
 };
+
+// --------------------------------------------------
+// OTP
+// --------------------------------------------------
 
 /**
  * Find a user with OTP fields.
  *
- * OTP fields are excluded from the normal User queries,
+ * OTP fields are excluded from normal User queries,
  * so they must be explicitly selected here.
  */
 const findByEmailWithOtp = async (
@@ -101,7 +119,9 @@ const updateOtp = async (
     userId: string,
     otpHash: string,
     otpExpiry: Date,
-    otpType: "email_verify" | "password_reset"
+    otpType:
+        | "email_verify"
+        | "password_reset"
 ): Promise<void> => {
     await User.findByIdAndUpdate(userId, {
         otpHash,
@@ -116,8 +136,14 @@ const incrementOtpAttempts = async (
 ): Promise<number> => {
     const user = await User.findByIdAndUpdate(
         userId,
-        { $inc: { otpAttempts: 1 } },
-        { returnDocument: "after" }
+        {
+            $inc: {
+                otpAttempts: 1,
+            },
+        },
+        {
+            returnDocument: "after",
+        }
     ).select("+otpAttempts");
 
     return user?.otpAttempts ?? 0;
@@ -145,12 +171,19 @@ const updatePassword = async (
     });
 };
 
+// --------------------------------------------------
+// Email Verification
+// --------------------------------------------------
+
 /**
  * Email verification only.
  *
  * IMPORTANT:
- * isVerified represents EMAIL verification.
- * It does NOT represent owner/admin approval.
+ *
+ * isVerified = email verification
+ * verificationStatus = owner/admin verification
+ *
+ * This method must NOT approve an owner.
  */
 const markVerified = async (
     userId: string
@@ -163,7 +196,7 @@ const markVerified = async (
 };
 
 // --------------------------------------------------
-// Profile picture
+// Profile Picture
 // --------------------------------------------------
 
 const findByIdWithImagePublicId = async (
@@ -186,15 +219,29 @@ const updateProfileImage = async (
 };
 
 // --------------------------------------------------
-// Owner ID verification
+// Owner ID Verification
 // --------------------------------------------------
 
 /**
- * Save the owner's verification document and mark the
- * verification request as pending.
+ * Save the owner's verification document.
  *
- * resourceType and format are required because Cloudinary
- * handles images and PDFs differently.
+ * IMPORTANT:
+ *
+ * This does NOT move the owner to "pending".
+ *
+ * Registration flow:
+ *
+ * document upload
+ *       ↓
+ * unsubmitted
+ *       ↓
+ * email verification
+ *       ↓
+ * markVerificationPending()
+ *       ↓
+ * pending
+ *       ↓
+ * admin review
  */
 const submitVerificationDocument = async (
     userId: string,
@@ -207,8 +254,7 @@ const submitVerificationDocument = async (
             idDocumentPublicId: publicId,
             idDocumentResourceType: resourceType,
             idDocumentFormat: format,
-            verificationStatus: "pending",
-            verificationSubmittedAt: new Date(),
+            verificationStatus: "unsubmitted",
         },
         $unset: {
             rejectionReason: 1,
@@ -219,12 +265,45 @@ const submitVerificationDocument = async (
 };
 
 /**
- * Return only owners whose verification request is
- * actually pending.
+ * Move an email-verified owner into the
+ * admin-review state.
  *
- * "unsubmitted" owners are not included because the
- * registration flow requires a document before an
- * owner request is submitted.
+ * This is intentionally separate from
+ * submitVerificationDocument().
+ */
+const markVerificationPending = async (
+    userId: string
+): Promise<void> => {
+    const result = await User.findOneAndUpdate(
+        {
+            _id: userId,
+            role: UserRole.OWNER,
+            isVerified: true,
+            verificationStatus: "unsubmitted",
+        },
+        {
+            $set: {
+                verificationStatus: "pending",
+                verificationSubmittedAt: new Date(),
+            },
+            $unset: {
+                rejectionReason: 1,
+                verificationReviewedAt: 1,
+                verificationReviewedBy: 1,
+            },
+        }
+    );
+
+    if (!result) {
+        throw new Error(
+            "Owner verification could not be moved to pending"
+        );
+    }
+};
+
+/**
+ * Return only owners whose verification request
+ * is actually pending.
  */
 const findPendingVerifications = async (): Promise<
     IUser[]
@@ -242,8 +321,8 @@ const findPendingVerifications = async (): Promise<
 };
 
 /**
- * Fetch all information required to securely access
- * an owner's verification document.
+ * Fetch all information required to securely
+ * access an owner's verification document.
  */
 const findByIdWithIdDocument = async (
     userId: string
@@ -257,7 +336,6 @@ const findByIdWithIdDocument = async (
  * Approve owner verification.
  *
  * IMPORTANT:
- * This does NOT change isVerified.
  *
  * isVerified = email verification
  * verificationStatus = owner verification
@@ -270,6 +348,7 @@ const approveVerification = async (
         {
             _id: userId,
             role: UserRole.OWNER,
+            isVerified: true,
             verificationStatus: "pending",
         },
         {
@@ -294,9 +373,8 @@ const approveVerification = async (
 /**
  * Reject owner verification.
  *
- * The document metadata is removed from the database.
- * The service layer is responsible for deleting the
- * actual Cloudinary asset.
+ * Document metadata is removed from the database.
+ * The service layer deletes the actual Cloudinary asset.
  */
 const rejectVerification = async (
     userId: string,
@@ -342,27 +420,38 @@ const updateUserLocation = async (
     });
 };
 
+// --------------------------------------------------
+// Repository Export
+// --------------------------------------------------
+
 const authRepository = {
     createUser,
     deleteUser,
+
     findByEmail,
     findById,
     updateProfile,
     findAllUsers,
     findAdminIds,
+
     findByEmailWithOtp,
     updateOtp,
     incrementOtpAttempts,
     clearOtp,
     updatePassword,
+
     markVerified,
+
     findByIdWithImagePublicId,
     updateProfileImage,
+
     submitVerificationDocument,
+    markVerificationPending,
     findPendingVerifications,
     findByIdWithIdDocument,
     approveVerification,
     rejectVerification,
+
     updateUserLocation,
 };
 
