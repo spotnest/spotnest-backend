@@ -6,6 +6,8 @@ import settingsRoutes from "../modules/settings/routes.js";
 import notificationRoutes from "../modules/notifications/routes.js";
 import tenantRoutes from "../modules/dashboard/tenantDashboard/routes.js";
 import chatRoutes from "../modules/chat/routes.js";
+import bookingRoutes from "../modules/bookings/routes.js";
+import paymentRoutes from "../modules/payments/routes.js";
 
 const apiRouter = Router();
 
@@ -16,5 +18,7 @@ apiRouter.use("/settings", settingsRoutes);
 apiRouter.use("/notifications", notificationRoutes);
 apiRouter.use("/tenant", tenantRoutes);
 apiRouter.use("/chat", chatRoutes);
+apiRouter.use("/bookings", bookingRoutes);
+apiRouter.use("/payments", paymentRoutes);
 
 export default apiRouter;

@@ -14,7 +14,7 @@ const notificationSchema = new Schema<INotification>(
         type: { type: String, enum: notificationTypes, required: true },
         isRead: { type: Boolean, default: false },
         referenceId: { type: Schema.Types.ObjectId },
-        referenceType: { type: String, enum: ["user", "property", "conversation"] },
+        referenceType: { type: String, enum: ["user", "property", "conversation", "booking"] },
         data: { type: Schema.Types.Mixed },
         count: { type: Number, default: 1 },
     },

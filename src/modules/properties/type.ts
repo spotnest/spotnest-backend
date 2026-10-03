@@ -28,6 +28,7 @@ export interface IProperty extends Document {
     description: string;
     propertyType: PropertyType;
     price: number;
+    advanceAmount?: number;
     bedrooms: number;
     bathrooms: number;
     areaSqFt?: number;

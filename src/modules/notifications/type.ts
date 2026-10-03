@@ -5,12 +5,15 @@ export const notificationTypes = [
     "owner_approved",
     "owner_rejected",
     "property_status",
+    "rental_request",
+    "rental_approved",
+    "rental_rejected",
     "chat_message",
     "system",
 ] as const;
 
 export type NotificationType = (typeof notificationTypes)[number];
-export type NotificationReferenceType = "user" | "property" | "conversation";
+export type NotificationReferenceType = "user" | "property" | "conversation" | "booking";
 
 export interface NotificationData {
     conversationId?: string;
