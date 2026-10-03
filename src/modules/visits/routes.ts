@@ -1,7 +1,11 @@
 import { Router } from "express";
 
 import protect from "../../shared/middleware/authMiddleware.js";
-import { requireVerifiedOwner } from "../../shared/middleware/roleMiddleware.js";
+import {
+    requireRole,
+    requireVerifiedOwner,
+} from "../../shared/middleware/roleMiddleware.js";
+import { UserRole } from "../auth/type.js";
 import * as visitController from "./controller.js";
 
 const router = Router();
@@ -38,6 +42,25 @@ router.get(
     protect,
     requireVerifiedOwner,
     visitController.getOwnerVisits
+);
+
+/**
+ * =========================
+ * ADMIN VISITS
+ * =========================
+ *
+ * Must come before /:id
+ * so "admin" is not treated as a visit ID.
+ *
+ * Admin can monitor all visit requests.
+ * Admin does not manage visit status here.
+ */
+
+router.get(
+    "/admin",
+    protect,
+    requireRole(UserRole.ADMIN),
+    visitController.getAdminVisits
 );
 
 /**

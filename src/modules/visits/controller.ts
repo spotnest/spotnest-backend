@@ -4,6 +4,7 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 import visitService from "./service.js";
 import {
     acceptVisitSchema,
+    adminVisitQuerySchema,
     createVisitSchema,
     rejectVisitSchema,
     rescheduleVisitSchema,
@@ -61,13 +62,38 @@ export const getOwnerVisits = async (
     }
 };
 
+export const getAdminVisits = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const data = adminVisitQuerySchema.parse(
+            req.query
+        );
+
+        const result =
+            await visitService.getAdminVisits(
+                data.page,
+                data.limit,
+                data.status
+            );
+
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getVisitById = async (
     req: AuthRequest,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
+        const visitId = visitIdSchema.parse(
+            req.params.id
+        );
 
         const visit = await visitService.getVisitById(
             visitId,
@@ -86,8 +112,13 @@ export const acceptVisit = async (
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
-        const data = acceptVisitSchema.parse(req.body);
+        const visitId = visitIdSchema.parse(
+            req.params.id
+        );
+
+        const data = acceptVisitSchema.parse(
+            req.body
+        );
 
         const visit = await visitService.acceptVisit(
             req.user!.id,
@@ -107,8 +138,13 @@ export const rejectVisit = async (
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
-        const data = rejectVisitSchema.parse(req.body);
+        const visitId = visitIdSchema.parse(
+            req.params.id
+        );
+
+        const data = rejectVisitSchema.parse(
+            req.body
+        );
 
         const visit = await visitService.rejectVisit(
             req.user!.id,
@@ -128,14 +164,19 @@ export const rescheduleVisit = async (
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
-        const data = rescheduleVisitSchema.parse(req.body);
-
-        const visit = await visitService.rescheduleVisit(
-            req.user!.id,
-            visitId,
-            data
+        const visitId = visitIdSchema.parse(
+            req.params.id
         );
+
+        const data =
+            rescheduleVisitSchema.parse(req.body);
+
+        const visit =
+            await visitService.rescheduleVisit(
+                req.user!.id,
+                visitId,
+                data
+            );
 
         res.status(200).json(visit);
     } catch (err) {
@@ -149,7 +190,9 @@ export const cancelVisit = async (
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
+        const visitId = visitIdSchema.parse(
+            req.params.id
+        );
 
         const visit = await visitService.cancelVisit(
             req.user!.id,
@@ -168,12 +211,15 @@ export const completeVisit = async (
     next: NextFunction
 ) => {
     try {
-        const visitId = visitIdSchema.parse(req.params.id);
-
-        const visit = await visitService.completeVisit(
-            req.user!.id,
-            visitId
+        const visitId = visitIdSchema.parse(
+            req.params.id
         );
+
+        const visit =
+            await visitService.completeVisit(
+                req.user!.id,
+                visitId
+            );
 
         res.status(200).json(visit);
     } catch (err) {

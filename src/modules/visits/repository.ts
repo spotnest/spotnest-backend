@@ -91,6 +91,35 @@ const findByRequesterAndStatus = async (
         .sort({ created_at: -1 });
 };
 
+const findForAdmin = async (
+    options: {
+        status?: VisitStatus;
+        limit: number;
+        skip: number;
+    }
+) => {
+    const filter = options.status
+        ? { status: options.status }
+        : {};
+
+    const [visits, total] = await Promise.all([
+        Visit.find(filter)
+            .populate("property", "title address images")
+            .populate("requester", "name email image")
+            .populate("owner", "name email image")
+            .sort({ updated_at: -1 })
+            .skip(options.skip)
+            .limit(options.limit),
+
+        Visit.countDocuments(filter),
+    ]);
+
+    return {
+        visits,
+        total,
+    };
+};
+
 export default {
     create,
     findById,
@@ -101,4 +130,5 @@ export default {
     update,
     findByOwnerAndStatus,
     findByRequesterAndStatus,
+    findForAdmin,
 };

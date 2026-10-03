@@ -279,6 +279,35 @@ const getOwnerVisits = async (
 };
 
 // -----------------------------------------------------
+// GET ADMIN VISITS
+// -----------------------------------------------------
+
+const getAdminVisits = async (
+    page: number,
+    limit: number,
+    status?: VisitStatus
+) => {
+    const skip = (page - 1) * limit;
+
+   const { visits, total } =
+    await visitRepository.findForAdmin({
+        ...(status !== undefined ? { status } : {}),
+        limit,
+        skip,
+    });
+
+    return {
+        visits,
+        pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit),
+        },
+    };
+};
+
+// -----------------------------------------------------
 // GET SINGLE VISIT
 // -----------------------------------------------------
 
@@ -590,6 +619,7 @@ export default {
     createVisit,
     getMyVisits,
     getOwnerVisits,
+    getAdminVisits,
     getVisitById,
     acceptVisit,
     rejectVisit,

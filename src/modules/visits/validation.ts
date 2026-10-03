@@ -80,6 +80,32 @@ export const rescheduleVisitSchema = z.object({
         ),
 });
 
+export const adminVisitQuerySchema = z.object({
+    page: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .default(1),
+
+    limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(20),
+
+    status: z
+        .enum([
+            "pending",
+            "accepted",
+            "rejected",
+            "rescheduled",
+            "cancelled",
+            "completed",
+        ])
+        .optional(),
+});
+
 export type CreateVisitInput =
     z.infer<typeof createVisitSchema>;
 
@@ -91,3 +117,6 @@ export type RejectVisitInput =
 
 export type RescheduleVisitInput =
     z.infer<typeof rescheduleVisitSchema>;
+
+export type AdminVisitQuery =
+    z.infer<typeof adminVisitQuerySchema>;
