@@ -1,12 +1,13 @@
 import type { Document, Types } from "mongoose";
 
-export type RentalStatus = "active" | "ended" | "cancelled";
-export type PaymentStatus = "paid" | "pending" | "due" | "overdue" | "failed";
-export type PaymentType = "rent" | "security_deposit" | "late_fee" | "other";
+export type RentalStatus = "scheduled" | "active" | "ended" | "cancelled";
+export type PaymentStatus = "PAID" | "PENDING" | "DUE" | "OVERDUE" | "FAILED" | "paid" | "pending" | "due" | "overdue" | "failed";
+export type PaymentType = "ADVANCE" | "MONTHLY_RENT" | "rent" | "security_deposit" | "late_fee" | "other";
 export type MaintenanceStatus = "pending" | "in_progress" | "resolved" | "rejected" | "cancelled";
 export type MaintenancePriority = "low" | "medium" | "high" | "urgent";
 
 export interface IRental extends Document {
+    booking?: Types.ObjectId;
     property: Types.ObjectId;
     owner: Types.ObjectId;
     tenant: Types.ObjectId;
@@ -21,12 +22,19 @@ export interface IRental extends Document {
 }
 
 export interface IPayment extends Document {
-    rental: Types.ObjectId;
+    booking?: Types.ObjectId;
+    rental?: Types.ObjectId;
     tenant: Types.ObjectId;
+    owner?: Types.ObjectId;
+    property?: Types.ObjectId;
     type: PaymentType;
     amount: number;
+    currency?: string;
+    billingMonth?: string;
     dueDate?: Date;
     paidAt?: Date;
+    razorpayOrderId?: string;
+    razorpayPaymentId?: string;
     status: PaymentStatus;
     method?: string;
     referenceId?: string;

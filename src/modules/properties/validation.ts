@@ -15,6 +15,7 @@ export const createPropertySchema = z.object({
     description: z.string().min(10).max(3000),
     propertyType: propertyTypeEnum,
     price: z.coerce.number().positive("Price must be greater than 0").max(100000000, "Price cannot exceed 100,000,000"),
+    advanceAmount: z.coerce.number().positive("Advance must be greater than 0").max(100000000, "Advance cannot exceed 100,000,000").optional(),
     bedrooms: z.coerce.number().int().min(0),
     bathrooms: z.coerce.number().int().min(0),
     areaSqFt: z.coerce.number().positive().optional(),

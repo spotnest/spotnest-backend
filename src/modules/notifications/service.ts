@@ -21,6 +21,10 @@ interface CreateNotificationInput {
 }
 
 const targetUrlFor = (notification: INotification, role?: UserRole): string | undefined => {
+    if (notification.type === "rental_request") return "/bookings?tab=requests";
+    if ((notification.type === "rental_approved" || notification.type === "rental_rejected") && notification.referenceId) {
+        return `/bookings?bookingId=${notification.referenceId.toString()}`;
+    }
     if (notification.type === "owner_approval_request") return "/requests/owner-approvals";
     if (notification.type === "owner_approved" || notification.type === "owner_rejected") return "/owner/dashboard";
     if (notification.type === "property_status" && notification.referenceId) {

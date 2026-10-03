@@ -12,6 +12,7 @@ const propertySchema = new Schema<IProperty>(
             required: true,
         },
         price: { type: Number, required: true, min: 0 },
+        advanceAmount: { type: Number, min: 1 },
         bedrooms: { type: Number, required: true, min: 0 },
         bathrooms: { type: Number, required: true, min: 0 },
         areaSqFt: { type: Number, min: 0 },

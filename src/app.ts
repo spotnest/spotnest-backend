@@ -11,6 +11,8 @@ const app = express();
 
 const clientOrigin = (process.env.CLIENT_URL || "http://localhost:3000").replace(/\/$/, "");
 
+app.use("/api/v1/payments/webhook", express.raw({ type: "application/json" }));
+
 app.use(
   cors({
     origin: clientOrigin,

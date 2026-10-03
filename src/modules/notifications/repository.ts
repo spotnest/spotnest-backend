@@ -75,8 +75,9 @@ const hiddenTypesByRole: Partial<Record<UserRole, NotificationType[]>> = {
         "owner_approved",
         "owner_rejected",
         "property_status",
+        "rental_request",
     ],
-    [UserRole.OWNER]: ["owner_approval_request"],
+    [UserRole.OWNER]: ["owner_approval_request", "rental_approved", "rental_rejected"],
 };
 
 const recipientFilter = (recipient: string, role: UserRole) => {
