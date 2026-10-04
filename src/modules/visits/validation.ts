@@ -42,7 +42,7 @@ export const createVisitSchema = z.object({
         .optional(),
 });
 
-export const acceptVisitSchema = z.object({
+export const approveVisitSchema = z.object({
     scheduledDate: visitDateSchema,
 
     scheduledTime: visitTimeSchema,
@@ -97,7 +97,7 @@ export const adminVisitQuerySchema = z.object({
     status: z
         .enum([
             "pending",
-            "accepted",
+            "approved",
             "rejected",
             "rescheduled",
             "cancelled",
@@ -109,8 +109,8 @@ export const adminVisitQuerySchema = z.object({
 export type CreateVisitInput =
     z.infer<typeof createVisitSchema>;
 
-export type AcceptVisitInput =
-    z.infer<typeof acceptVisitSchema>;
+export type ApproveVisitInput =
+    z.infer<typeof approveVisitSchema>;
 
 export type RejectVisitInput =
     z.infer<typeof rejectVisitSchema>;

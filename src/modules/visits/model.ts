@@ -3,7 +3,7 @@ import type { IVisit, VisitStatus } from "./type.js";
 
 const visitStatuses: VisitStatus[] = [
     "pending",
-    "accepted",
+    "approved",
     "rejected",
     "rescheduled",
     "cancelled",
@@ -84,7 +84,7 @@ const visitSchema = new Schema<IVisit>(
             createdAt: "created_at",
             updatedAt: "updated_at",
         },
-    },
+    }
 );
 
 /**

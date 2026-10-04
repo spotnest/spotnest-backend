@@ -56,14 +56,16 @@ const findByProperty = async (
 
 const update = async (
     id: string,
-    data: Partial<Pick<
-        IVisit,
-        | "status"
-        | "scheduledDate"
-        | "scheduledTime"
-        | "rejectionReason"
-        | "rescheduleReason"
-    >>
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
 ): Promise<IVisit | null> => {
     return Visit.findByIdAndUpdate(
         id,
@@ -104,9 +106,18 @@ const findForAdmin = async (
 
     const [visits, total] = await Promise.all([
         Visit.find(filter)
-            .populate("property", "title address images")
-            .populate("requester", "name email image")
-            .populate("owner", "name email image")
+            .populate(
+                "property",
+                "title address images"
+            )
+            .populate(
+                "requester",
+                "name email image"
+            )
+            .populate(
+                "owner",
+                "name email image"
+            )
             .sort({ updated_at: -1 })
             .skip(options.skip)
             .limit(options.limit),
