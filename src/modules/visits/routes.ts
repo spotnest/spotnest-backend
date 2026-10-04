@@ -82,10 +82,10 @@ router.get(
  */
 
 router.patch(
-    "/:id/accept",
+    "/:id/approve",
     protect,
     requireVerifiedOwner,
-    visitController.acceptVisit
+    visitController.approveVisit
 );
 
 router.patch(
