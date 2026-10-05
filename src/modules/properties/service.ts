@@ -84,6 +84,7 @@ const createProperty = async (
     const property = await propertyRepository.createProperty({
         ...listingFields,
         owner: ownerId,
+        advanceAmount: data.advanceAmount ?? data.price,
         location: { type: "Point", coordinates: [geo.lng, geo.lat] }, // [lng, lat]
         locationResolvedName: geo.displayName,
         images: [],

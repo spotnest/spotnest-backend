@@ -5,7 +5,7 @@ import visitRepository from "./repository.js";
 
 import type { IVisit, VisitStatus } from "./type.js";
 import type {
-    AcceptVisitInput,
+    ApproveVisitInput,
     CreateVisitInput,
     RejectVisitInput,
     RescheduleVisitInput,
@@ -16,7 +16,8 @@ import type {
 // -----------------------------------------------------
 
 const parseDate = (date: string): Date => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    const match =
+        /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
 
     if (!match) {
         throw new AppError(
@@ -52,11 +53,14 @@ const parseDate = (date: string): Date => {
     return parsedDate;
 };
 
-const parseTime = (time: string): {
+const parseTime = (
+    time: string
+): {
     hours: number;
     minutes: number;
 } => {
-    const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+    const match =
+        /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
 
     if (!match) {
         throw new AppError(
@@ -103,9 +107,8 @@ const ensureDateTimeNotPast = (
 const getVisitOrThrow = async (
     visitId: string
 ): Promise<IVisit> => {
-    const visit = await visitRepository.findById(
-        visitId
-    );
+    const visit =
+        await visitRepository.findById(visitId);
 
     if (!visit) {
         throw new AppError(
@@ -234,18 +237,19 @@ const createVisit = async (
         );
     }
 
-    const visit = await visitRepository.create({
-        property: data.propertyId,
-        requester: requesterId,
-        owner: ownerId,
-        requestedDate,
-        requestedTime: data.requestedTime,
-        ...(data.message
-            ? {
-                  message: data.message,
-              }
-            : {}),
-    });
+    const visit =
+        await visitRepository.create({
+            property: data.propertyId,
+            requester: requesterId,
+            owner: ownerId,
+            requestedDate,
+            requestedTime: data.requestedTime,
+            ...(data.message
+                ? {
+                      message: data.message,
+                  }
+                : {}),
+        });
 
     await notifyOwner(
         visit,
@@ -289,12 +293,14 @@ const getAdminVisits = async (
 ) => {
     const skip = (page - 1) * limit;
 
-   const { visits, total } =
-    await visitRepository.findForAdmin({
-        ...(status !== undefined ? { status } : {}),
-        limit,
-        skip,
-    });
+    const { visits, total } =
+        await visitRepository.findForAdmin({
+            ...(status !== undefined
+                ? { status }
+                : {}),
+            limit,
+            skip,
+        });
 
     return {
         visits,
@@ -302,7 +308,9 @@ const getAdminVisits = async (
             page,
             limit,
             total,
-            pages: Math.ceil(total / limit),
+            pages: Math.ceil(
+                total / limit
+            ),
         },
     };
 };
@@ -335,13 +343,13 @@ const getVisitById = async (
 };
 
 // -----------------------------------------------------
-// ACCEPT VISIT
+// APPROVE VISIT
 // -----------------------------------------------------
 
-const acceptVisit = async (
+const approveVisit = async (
     ownerId: string,
     visitId: string,
-    data: AcceptVisitInput
+    data: ApproveVisitInput
 ): Promise<IVisit> => {
     const visit =
         await getVisitOrThrow(visitId);
@@ -354,7 +362,7 @@ const acceptVisit = async (
     ensureStatus(
         visit,
         ["pending", "rescheduled"],
-        "accept"
+        "approve"
     );
 
     const scheduledDate = parseDate(
@@ -370,7 +378,7 @@ const acceptVisit = async (
         await visitRepository.update(
             visitId,
             {
-                status: "accepted",
+                status: "approved",
                 scheduledDate,
                 scheduledTime:
                     data.scheduledTime,
@@ -386,8 +394,8 @@ const acceptVisit = async (
 
     await notifyRequester(
         updatedVisit,
-        "Visit request accepted",
-        `Your visit request has been accepted for ${data.scheduledDate} at ${data.scheduledTime}.`
+        "Visit request approved",
+        `Your visit request has been approved for ${data.scheduledDate} at ${data.scheduledTime}.`
     );
 
     return updatedVisit;
@@ -461,7 +469,7 @@ const rescheduleVisit = async (
 
     ensureStatus(
         visit,
-        ["pending", "accepted", "rescheduled"],
+        ["pending", "approved", "rescheduled"],
         "reschedule"
     );
 
@@ -529,7 +537,7 @@ const cancelVisit = async (
 
     ensureStatus(
         visit,
-        ["pending", "accepted", "rescheduled"],
+        ["pending", "approved", "rescheduled"],
         "cancel"
     );
 
@@ -583,7 +591,7 @@ const completeVisit = async (
 
     ensureStatus(
         visit,
-        ["accepted"],
+        ["approved"],
         "complete"
     );
 
@@ -621,7 +629,7 @@ export default {
     getOwnerVisits,
     getAdminVisits,
     getVisitById,
-    acceptVisit,
+    approveVisit,
     rejectVisit,
     rescheduleVisit,
     cancelVisit,
