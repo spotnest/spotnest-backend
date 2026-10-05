@@ -48,6 +48,24 @@ const findByOwner = async (ownerId: string): Promise<IProperty[]> => {
     return Property.find({ owner: ownerId }).sort({ created_at: -1 });
 };
 
+/**
+ * Count an owner's listings against their plan limit.
+ *
+ * Counts "active" AND "inactive" on purpose: a listing is created as
+ * "inactive" and flipped to "active" only after its images upload, so
+ * counting only "active" would let a burst of in-flight creates sail past the
+ * cap.
+ *
+ * Excludes "archived", which is this app's soft delete (DELETE /:id calls
+ * setStatus("archived")). An archived listing should not consume quota.
+ */
+const countByOwner = async (ownerId: string): Promise<number> => {
+    return Property.countDocuments({
+        owner: ownerId,
+        status: { $ne: "archived" },
+    });
+};
+
 // statusFilter: pass "active" for public listing, undefined for admin (all statuses),
 // or a specific status if the admin query explicitly asked for one.
 const findMany = async (
@@ -193,6 +211,7 @@ const propertyRepository = {
     findById,
     findPublicById,
     findByOwner,
+    countByOwner,
     findMany,
     findManyForAdmin,
     findAdminById,

@@ -7,6 +7,7 @@ import { UserRole } from "../auth/type.js";
 import type { AdminProperty, IProperty, PropertyAddress, PublicProperty } from "./type.js";
 import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
+import subscriptionService from "../subscriptions/service.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
@@ -14,8 +15,6 @@ import type {
     AdminListPropertiesQuery,
     NearbyQuery,
 } from "./validation.js";
-
-const MAX_IMAGES = 8;
 
 const geocodeAddress = async (address: PropertyAddress) => {
     // Try the full street address first. Indian street-level addresses often
@@ -44,14 +43,29 @@ const createProperty = async (
     data: CreatePropertyInput,
     files: { buffer: Buffer; mimetype: string }[]
 ): Promise<IProperty> => {
+    /**
+     * Plan limit first.
+     *
+     * Deliberately the very first thing that touches the network: the caller's
+     * listing cap must be checked BEFORE geocoding (an outbound HTTP call) and
+     * BEFORE any Cloudinary upload (money and orphaned assets). A rejected
+     * create costs one DB count.
+     */
+    await subscriptionService.assertCanCreateListing(ownerId);
+
     const settings = await settingsRepository.getGlobal();
     if (!settings.propertyListingEnabled) throw new AppError(403, "Property listing is currently disabled");
     if (files.length === 0) {
         throw new AppError(400, "At least one property image is required");
     }
-    if (files.length > MAX_IMAGES) {
-        throw new AppError(400, `A maximum of ${MAX_IMAGES} images is allowed`);
-    }
+
+    // Photo cap comes from the owner's plan, not a fixed constant.
+    await subscriptionService.assertImageLimit({
+        ownerId,
+        role: UserRole.OWNER,
+        existingImages: 0,
+        additionalImages: files.length,
+    });
 
     // Listings go live with the final status once their images are attached.
     // Only pending-admin-approval mode keeps them offline.
@@ -228,9 +242,20 @@ const addImages = async (
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
 
-    if (property.images.length + files.length > MAX_IMAGES) {
-        throw new AppError(400, `A property can have at most ${MAX_IMAGES} images`);
-    }
+    /**
+     * Cap is checked against the property OWNER, not the caller, so an admin
+     * adding photos to a free-tier owner's listing is measured against that
+     * owner's plan.
+     *
+     * Existing images are never removed when a plan expires or is downgraded —
+     * only adding beyond the current cap is blocked.
+     */
+    await subscriptionService.assertImageLimit({
+        ownerId: property.owner.toString(),
+        role,
+        existingImages: property.images.length,
+        additionalImages: files.length,
+    });
 
     const uploadResults = await Promise.allSettled(
         files.map((file) => uploadImage(file.buffer, `spotnest/properties/${id}`))

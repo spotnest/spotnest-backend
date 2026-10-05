@@ -8,6 +8,9 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         res.status(err.statusCode).json({
             success: false,
             message: err.message,
+            // Only present when the error set one. Clients match on the code
+            // (LISTING_LIMIT_REACHED) to pick the right recovery UI.
+            ...(err.code ? { code: err.code } : {}),
         });
         return;
     }
