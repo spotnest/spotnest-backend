@@ -10,6 +10,7 @@ const settingsSchema = new Schema<ISettings>(
         ownerRegistrationEnabled: { type: Boolean, default: true },
         propertyApprovalRequired: { type: Boolean, default: false },
         propertyListingEnabled: { type: Boolean, default: true },
+        subscriptionsEnabled: { type: Boolean, default: true },
         newOwnerRegistrationAlerts: { type: Boolean, default: true },
         ownerApprovalEmails: { type: Boolean, default: true },
         platformName: { type: String, default: "SpotNest", trim: true },

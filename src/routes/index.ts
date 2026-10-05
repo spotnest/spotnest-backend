@@ -7,6 +7,7 @@ import notificationRoutes from "../modules/notifications/routes.js";
 import visitRoutes from "../modules/visits/routes.js";
 import tenantRoutes from "../modules/dashboard/tenantDashboard/routes.js";
 import chatRoutes from "../modules/chat/routes.js";
+import subscriptionRoutes from "../modules/subscriptions/routes.js";
 import bookingRoutes from "../modules/bookings/routes.js";
 import paymentRoutes from "../modules/payments/routes.js";
 
@@ -20,6 +21,7 @@ apiRouter.use("/notifications", notificationRoutes);
 apiRouter.use("/visits", visitRoutes);
 apiRouter.use("/tenant", tenantRoutes);
 apiRouter.use("/chat", chatRoutes);
+apiRouter.use("/subscriptions", subscriptionRoutes);
 apiRouter.use("/bookings", bookingRoutes);
 apiRouter.use("/payments", paymentRoutes);
 
