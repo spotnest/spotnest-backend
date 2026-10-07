@@ -24,10 +24,18 @@ export const createPropertySchema = z.object({
 });
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
 
+const imageSchema = z.object({
+    url: z.string(),
+    publicId: z.string().optional().default(""),
+});
+
 export const updatePropertySchema = createPropertySchema
     .omit({ address: true })
     .partial()
-    .extend({ address: addressSchema.optional() });
+    .extend({
+        address: addressSchema.optional(),
+        images: z.array(imageSchema).optional(),
+    });
 export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
 
 export const nearbyQuerySchema = z.object({

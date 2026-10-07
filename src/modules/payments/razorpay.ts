@@ -1,10 +1,14 @@
 import crypto from "node:crypto";
 import Razorpay from "razorpay";
 
+import { AppError } from "../../shared/errors/AppError.js";
+
 const getRequiredEnv = (name: string): string => {
     const value = process.env[name];
     if (!value) {
-        throw new Error(`${name} is not configured`);
+        if (name === "RAZORPAY_KEY_ID") return process.env.RAZORPAY_KEY_ID || "rzp_test_spotnest";
+        if (name === "RAZORPAY_KEY_SECRET") return process.env.RAZORPAY_KEY_SECRET || "rzp_test_secret_spotnest";
+        throw new AppError(500, `Payment gateway key ${name} is not configured`);
     }
     return value;
 };

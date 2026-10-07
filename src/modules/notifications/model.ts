@@ -34,7 +34,7 @@ const notificationSchema = new Schema<INotification>(
         },
         referenceType: {
             type: String,
-            enum: ["user", "property", "conversation", "visit"],
+            enum: ["user", "property", "conversation", "visit", "booking"],
         },
         data: {
             type: Schema.Types.Mixed,

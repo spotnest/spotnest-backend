@@ -32,6 +32,17 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         return;
     }
 
+    if (
+        (err as { name?: string })?.name === "CastError" ||
+        (err as { kind?: string })?.kind === "ObjectId"
+    ) {
+        res.status(404).json({
+            success: false,
+            message: "Resource not found",
+        });
+        return;
+    }
+
     console.error("Unhandled error:", err);
 
     res.status(500).json({
