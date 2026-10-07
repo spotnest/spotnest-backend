@@ -5,7 +5,9 @@ import type {
     IRental,
 } from "./type.js";
 
-//RENTAL
+// ============================================================
+// RENTAL
+// ============================================================
 
 const rentalSchema = new Schema<IRental>(
     {
@@ -83,7 +85,10 @@ const rentalSchema = new Schema<IRental>(
     }
 );
 
-rentalSchema.index({ tenant: 1, status: 1 });
+rentalSchema.index({
+    tenant: 1,
+    status: 1,
+});
 
 rentalSchema.index(
     { booking: 1 },
@@ -93,7 +98,9 @@ rentalSchema.index(
     }
 );
 
+// ============================================================
 // PAYMENT
+// ============================================================
 
 const paymentSchema = new Schema<IPayment>(
     {
@@ -224,28 +231,49 @@ const paymentSchema = new Schema<IPayment>(
     }
 );
 
+// General tenant/rental payment lookup.
 paymentSchema.index({
     tenant: 1,
     rental: 1,
     dueDate: -1,
 });
 
+// ============================================================
+// MONTHLY RENT UNIQUENESS
+//
+// One rental can have multiple occupants.
+//
+// Example:
+//
+// Rental A
+//   Occupant A -> October -> ₹7000
+//   Occupant B -> October -> ₹5000
+//   Occupant C -> October -> ₹3000
+//
+// Each occupant gets ONE monthly payment for a billing month.
+//
+// Therefore uniqueness is:
+// rental + occupant + type + billingMonth
+// ============================================================
+
 paymentSchema.index(
     {
-        booking: 1,
-        tenant: 1,
+        rental: 1,
+        occupant: 1,
         type: 1,
         billingMonth: 1,
     },
     {
         unique: true,
         partialFilterExpression: {
-            booking: { $exists: true },
+            rental: { $exists: true },
+            occupant: { $exists: true },
             billingMonth: { $type: "string" },
         },
     }
 );
 
+// Razorpay order IDs must be unique when present.
 paymentSchema.index(
     { razorpayOrderId: 1 },
     {
@@ -254,6 +282,7 @@ paymentSchema.index(
     }
 );
 
+// Razorpay payment IDs must be unique when present.
 paymentSchema.index(
     { razorpayPaymentId: 1 },
     {
@@ -262,7 +291,10 @@ paymentSchema.index(
     }
 );
 
-//  MAINTENANCE
+// ============================================================
+// MAINTENANCE
+// ============================================================
+
 const maintenanceSchema = new Schema<IMaintenanceRequest>(
     {
         rental: {
@@ -350,7 +382,10 @@ maintenanceSchema.index({
     created_at: -1,
 });
 
-// MODELS 
+// ============================================================
+// MODELS
+// ============================================================
+
 export const Rental = mongoose.model<IRental>(
     "Rental",
     rentalSchema
