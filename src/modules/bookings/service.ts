@@ -36,13 +36,30 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         throw new AppError(400, "Property rental terms are invalid");
     }
 
-    const conflictingBooking = await Booking.findOne({
+    const confirmedBooking = await Booking.findOne({
         propertyId: property._id,
-        status: { $nin: ["REJECTED", "COMPLETED"] },
+        status: { $in: ["CONFIRMED", "ACTIVE"] },
         startDate: { $lt: payload.endDate },
         endDate: { $gt: payload.startDate },
     }).lean();
-    if (conflictingBooking) throw new AppError(409, "This property already has a request for those rental dates");
+    if (confirmedBooking) {
+        if (confirmedBooking.userId.toString() === userId) {
+            throw new AppError(409, "You already have an active rental for this property");
+        }
+        throw new AppError(409, "This property is already rented for the selected dates");
+    }
+
+    const myExistingRequest = await Booking.findOne({
+        propertyId: property._id,
+        userId: new mongoose.Types.ObjectId(userId),
+        status: { $in: ["PENDING", "APPROVED"] },
+    }).lean();
+    if (myExistingRequest) {
+        if (myExistingRequest.status === "APPROVED") {
+            throw new AppError(409, "Your rental request is already approved. Please proceed to pay advance.");
+        }
+        throw new AppError(409, "You already have a pending rental request for this property.");
+    }
 
     const booking = await bookingRepository.createBooking({
         userId: new mongoose.Types.ObjectId(userId),

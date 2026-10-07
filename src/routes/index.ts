@@ -10,6 +10,7 @@ import chatRoutes from "../modules/chat/routes.js";
 import subscriptionRoutes from "../modules/subscriptions/routes.js";
 import bookingRoutes from "../modules/bookings/routes.js";
 import paymentRoutes from "../modules/payments/routes.js";
+import rentalRoutes from "../modules/rentals/routes.js";
 
 const apiRouter = Router();
 
@@ -24,5 +25,6 @@ apiRouter.use("/chat", chatRoutes);
 apiRouter.use("/subscriptions", subscriptionRoutes);
 apiRouter.use("/bookings", bookingRoutes);
 apiRouter.use("/payments", paymentRoutes);
+apiRouter.use("/rentals", rentalRoutes);
 
 export default apiRouter;

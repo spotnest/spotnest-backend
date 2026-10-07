@@ -62,6 +62,12 @@ const rentalSchema = new Schema<IRental>(
             default: "monthly",
         },
 
+        splitMode: {
+            type: String,
+            enum: ["EQUAL", "CUSTOM"],
+            default: "EQUAL",
+        },
+
         status: {
             type: String,
             enum: ["scheduled", "active", "ended", "cancelled"],
@@ -100,6 +106,12 @@ const paymentSchema = new Schema<IPayment>(
         rental: {
             type: Schema.Types.ObjectId,
             ref: "Rental",
+            index: true,
+        },
+
+        occupant: {
+            type: Schema.Types.ObjectId,
+            ref: "RentalOccupant",
             index: true,
         },
 
@@ -221,6 +233,7 @@ paymentSchema.index({
 paymentSchema.index(
     {
         booking: 1,
+        tenant: 1,
         type: 1,
         billingMonth: 1,
     },
