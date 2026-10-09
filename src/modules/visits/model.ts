@@ -114,6 +114,16 @@ visitSchema.index({
     created_at: -1,
 });
 
+
+visitSchema.index(
+    { requester: 1, property: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            status: "pending",
+        },
+    }
+);
 const Visit = mongoose.model<IVisit>("Visit", visitSchema);
 
 export default Visit;
