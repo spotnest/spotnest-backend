@@ -4,6 +4,7 @@ import notificationService from "../notifications/service.js";
 import visitRepository from "./repository.js";
 
 import type { IVisit, VisitStatus } from "./type.js";
+
 import type {
     ApproveVisitInput,
     CreateVisitInput,
@@ -16,8 +17,7 @@ import type {
 // -----------------------------------------------------
 
 const parseDate = (date: string): Date => {
-    const match =
-        /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
 
     if (!match) {
         throw new AppError(
@@ -40,8 +40,6 @@ const parseDate = (date: string): Date => {
         0
     );
 
-    // Prevent JavaScript from normalizing invalid dates such as:
-    // 2026-02-30 -> March 2
     if (
         parsedDate.getFullYear() !== year ||
         parsedDate.getMonth() !== month - 1 ||
@@ -55,12 +53,8 @@ const parseDate = (date: string): Date => {
 
 const parseTime = (
     time: string
-): {
-    hours: number;
-    minutes: number;
-} => {
-    const match =
-        /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+): { hours: number; minutes: number } => {
+    const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
 
     if (!match) {
         throw new AppError(
@@ -80,17 +74,10 @@ const ensureDateTimeNotPast = (
     time: string
 ): void => {
     const { hours, minutes } = parseTime(time);
-
     const now = new Date();
-
     const selectedDateTime = new Date(date);
 
-    selectedDateTime.setHours(
-        hours,
-        minutes,
-        0,
-        0
-    );
+    selectedDateTime.setHours(hours, minutes, 0, 0);
 
     if (selectedDateTime < now) {
         throw new AppError(
@@ -107,23 +94,19 @@ const ensureDateTimeNotPast = (
 const getVisitOrThrow = async (
     visitId: string
 ): Promise<IVisit> => {
-    const visit =
-        await visitRepository.findById(visitId);
+    const visit = await visitRepository.findById(visitId);
 
     if (!visit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw new AppError(404, "Visit request not found");
     }
 
     return visit;
 };
 
-const ensureOwnerAccess = async (
+const ensureOwnerAccess = (
     visit: IVisit,
     ownerId: string
-): Promise<void> => {
+): void => {
     if (visit.owner.toString() !== ownerId) {
         throw new AppError(
             403,
@@ -144,6 +127,12 @@ const ensureStatus = (
         );
     }
 };
+
+const updateConflict = (): AppError =>
+    new AppError(
+        409,
+        "This visit request was already updated or is no longer in the expected status"
+    );
 
 // -----------------------------------------------------
 // NOTIFICATIONS
@@ -187,16 +176,12 @@ const createVisit = async (
     requesterId: string,
     data: CreateVisitInput
 ): Promise<IVisit> => {
-    const property =
-        await propertyRepository.findById(
-            data.propertyId
-        );
+    const property = await propertyRepository.findById(
+        data.propertyId
+    );
 
     if (!property) {
-        throw new AppError(
-            404,
-            "Property not found"
-        );
+        throw new AppError(404, "Property not found");
     }
 
     if (property.status !== "active") {
@@ -215,9 +200,7 @@ const createVisit = async (
         );
     }
 
-    const requestedDate = parseDate(
-        data.requestedDate
-    );
+    const requestedDate = parseDate(data.requestedDate);
 
     ensureDateTimeNotPast(
         requestedDate,
@@ -233,23 +216,37 @@ const createVisit = async (
     if (existingVisit) {
         throw new AppError(
             409,
-            "You already have a pending visit request for this property"
+            "You already have a pending visit request for this property",
+            "VISIT_ALREADY_PENDING"
         );
     }
 
-    const visit =
-        await visitRepository.create({
+    let visit: IVisit;
+
+    try {
+        visit = await visitRepository.create({
             property: data.propertyId,
             requester: requesterId,
             owner: ownerId,
             requestedDate,
             requestedTime: data.requestedTime,
             ...(data.message
-                ? {
-                      message: data.message,
-                  }
+                ? { message: data.message }
                 : {}),
         });
+    } catch (error) {
+        // The database unique index protects against
+        // simultaneous duplicate pending requests.
+        if ((error as { code?: number }).code === 11000) {
+            throw new AppError(
+                409,
+                "You already have a pending visit request for this property",
+                "VISIT_ALREADY_PENDING"
+            );
+        }
+
+        throw error;
+    }
 
     await notifyOwner(
         visit,
@@ -261,30 +258,20 @@ const createVisit = async (
 };
 
 // -----------------------------------------------------
-// GET USER VISITS
+// GET VISITS
 // -----------------------------------------------------
 
 const getMyVisits = async (
     requesterId: string
 ): Promise<IVisit[]> => {
-    return visitRepository.findByRequester(
-        requesterId
-    );
+    return visitRepository.findByRequester(requesterId);
 };
-
-// -----------------------------------------------------
-// GET OWNER VISITS
-// -----------------------------------------------------
 
 const getOwnerVisits = async (
     ownerId: string
 ): Promise<IVisit[]> => {
     return visitRepository.findByOwner(ownerId);
 };
-
-// -----------------------------------------------------
-// GET ADMIN VISITS
-// -----------------------------------------------------
 
 const getAdminVisits = async (
     page: number,
@@ -295,9 +282,7 @@ const getAdminVisits = async (
 
     const { visits, total } =
         await visitRepository.findForAdmin({
-            ...(status !== undefined
-                ? { status }
-                : {}),
+            ...(status !== undefined ? { status } : {}),
             limit,
             skip,
         });
@@ -308,9 +293,7 @@ const getAdminVisits = async (
             page,
             limit,
             total,
-            pages: Math.ceil(
-                total / limit
-            ),
+            pages: Math.ceil(total / limit),
         },
     };
 };
@@ -323,14 +306,12 @@ const getVisitById = async (
     visitId: string,
     userId: string
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
     const isRequester =
         visit.requester.toString() === userId;
 
-    const isOwner =
-        visit.owner.toString() === userId;
+    const isOwner = visit.owner.toString() === userId;
 
     if (!isRequester && !isOwner) {
         throw new AppError(
@@ -351,45 +332,36 @@ const approveVisit = async (
     visitId: string,
     data: ApproveVisitInput
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
-    await ensureOwnerAccess(
-        visit,
-        ownerId
-    );
+    ensureOwnerAccess(visit, ownerId);
 
-    ensureStatus(
-        visit,
-        ["pending", "rescheduled"],
-        "approve"
-    );
+    const allowedStatuses: VisitStatus[] = [
+        "pending",
+        "rescheduled",
+    ];
 
-    const scheduledDate = parseDate(
-        data.scheduledDate
-    );
+    ensureStatus(visit, allowedStatuses, "approve");
+
+    const scheduledDate = parseDate(data.scheduledDate);
 
     ensureDateTimeNotPast(
         scheduledDate,
         data.scheduledTime
     );
 
-    const updatedVisit =
-        await visitRepository.update(
-            visitId,
-            {
-                status: "approved",
-                scheduledDate,
-                scheduledTime:
-                    data.scheduledTime,
-            }
-        );
+    const updatedVisit = await visitRepository.updateIfStatus(
+        visitId,
+        allowedStatuses,
+        {
+            status: "approved",
+            scheduledDate,
+            scheduledTime: data.scheduledTime,
+        }
+    );
 
     if (!updatedVisit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw updateConflict();
     }
 
     await notifyRequester(
@@ -410,35 +382,28 @@ const rejectVisit = async (
     visitId: string,
     data: RejectVisitInput
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
-    await ensureOwnerAccess(
-        visit,
-        ownerId
+    ensureOwnerAccess(visit, ownerId);
+
+    const allowedStatuses: VisitStatus[] = [
+        "pending",
+        "rescheduled",
+    ];
+
+    ensureStatus(visit, allowedStatuses, "reject");
+
+    const updatedVisit = await visitRepository.updateIfStatus(
+        visitId,
+        allowedStatuses,
+        {
+            status: "rejected",
+            rejectionReason: data.rejectionReason,
+        }
     );
-
-    ensureStatus(
-        visit,
-        ["pending", "rescheduled"],
-        "reject"
-    );
-
-    const updatedVisit =
-        await visitRepository.update(
-            visitId,
-            {
-                status: "rejected",
-                rejectionReason:
-                    data.rejectionReason,
-            }
-        );
 
     if (!updatedVisit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw updateConflict();
     }
 
     await notifyRequester(
@@ -459,47 +424,38 @@ const rescheduleVisit = async (
     visitId: string,
     data: RescheduleVisitInput
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
-    await ensureOwnerAccess(
-        visit,
-        ownerId
-    );
+    ensureOwnerAccess(visit, ownerId);
 
-    ensureStatus(
-        visit,
-        ["pending", "approved", "rescheduled"],
-        "reschedule"
-    );
+    const allowedStatuses: VisitStatus[] = [
+        "pending",
+        "approved",
+        "rescheduled",
+    ];
 
-    const scheduledDate = parseDate(
-        data.scheduledDate
-    );
+    ensureStatus(visit, allowedStatuses, "reschedule");
+
+    const scheduledDate = parseDate(data.scheduledDate);
 
     ensureDateTimeNotPast(
         scheduledDate,
         data.scheduledTime
     );
 
-    const updatedVisit =
-        await visitRepository.update(
-            visitId,
-            {
-                status: "rescheduled",
-                scheduledDate,
-                scheduledTime:
-                    data.scheduledTime,
-                rescheduleReason:
-                    data.rescheduleReason,
-            }
-        );
+    const updatedVisit = await visitRepository.updateIfStatus(
+        visitId,
+        allowedStatuses,
+        {
+            status: "rescheduled",
+            scheduledDate,
+            scheduledTime: data.scheduledTime,
+            rescheduleReason: data.rescheduleReason,
+        }
+    );
 
     if (!updatedVisit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw updateConflict();
     }
 
     await notifyRequester(
@@ -519,14 +475,12 @@ const cancelVisit = async (
     userId: string,
     visitId: string
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
     const isRequester =
         visit.requester.toString() === userId;
 
-    const isOwner =
-        visit.owner.toString() === userId;
+    const isOwner = visit.owner.toString() === userId;
 
     if (!isRequester && !isOwner) {
         throw new AppError(
@@ -535,25 +489,22 @@ const cancelVisit = async (
         );
     }
 
-    ensureStatus(
-        visit,
-        ["pending", "approved", "rescheduled"],
-        "cancel"
+    const allowedStatuses: VisitStatus[] = [
+        "pending",
+        "approved",
+        "rescheduled",
+    ];
+
+    ensureStatus(visit, allowedStatuses, "cancel");
+
+    const updatedVisit = await visitRepository.updateIfStatus(
+        visitId,
+        allowedStatuses,
+        { status: "cancelled" }
     );
 
-    const updatedVisit =
-        await visitRepository.update(
-            visitId,
-            {
-                status: "cancelled",
-            }
-        );
-
     if (!updatedVisit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw updateConflict();
     }
 
     if (isRequester) {
@@ -581,33 +532,22 @@ const completeVisit = async (
     ownerId: string,
     visitId: string
 ): Promise<IVisit> => {
-    const visit =
-        await getVisitOrThrow(visitId);
+    const visit = await getVisitOrThrow(visitId);
 
-    await ensureOwnerAccess(
-        visit,
-        ownerId
+    ensureOwnerAccess(visit, ownerId);
+
+    const allowedStatuses: VisitStatus[] = ["approved"];
+
+    ensureStatus(visit, allowedStatuses, "complete");
+
+    const updatedVisit = await visitRepository.updateIfStatus(
+        visitId,
+        allowedStatuses,
+        { status: "completed" }
     );
-
-    ensureStatus(
-        visit,
-        ["approved"],
-        "complete"
-    );
-
-    const updatedVisit =
-        await visitRepository.update(
-            visitId,
-            {
-                status: "completed",
-            }
-        );
 
     if (!updatedVisit) {
-        throw new AppError(
-            404,
-            "Visit request not found"
-        );
+        throw updateConflict();
     }
 
     await notifyRequester(

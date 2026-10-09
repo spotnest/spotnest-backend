@@ -77,6 +77,41 @@ const update = async (
     );
 };
 
+/**
+ * Atomically updates a visit only when its current
+ * status is one of the allowed statuses.
+ *
+ * This prevents race conditions where two requests
+ * read the same status and both attempt to transition
+ * the visit.
+ */
+const updateIfStatus = async (
+    id: string,
+    allowedStatuses: VisitStatus[],
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
+): Promise<IVisit | null> => {
+    return Visit.findOneAndUpdate(
+        {
+            _id: id,
+            status: { $in: allowedStatuses },
+        },
+        { $set: data },
+        {
+            new: true,
+            runValidators: true,
+        }
+    );
+};
+
 const findByOwnerAndStatus = async (
     owner: string,
     status: VisitStatus
@@ -139,6 +174,7 @@ export default {
     findByOwner,
     findByProperty,
     update,
+    updateIfStatus,
     findByOwnerAndStatus,
     findByRequesterAndStatus,
     findForAdmin,
