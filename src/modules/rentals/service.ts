@@ -3,7 +3,6 @@ import { AppError } from "../../shared/errors/AppError.js";
 import User from "../auth/model.js";
 import { Rental, Payment } from "../dashboard/tenantDashboard/model.js";
 import notificationService from "../notifications/service.js";
-import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import { RentalAgreement, RentalOccupant } from "./model.js";
 import repository from "./repository.js";
 import type { SetRentSplitInput } from "./validation.js";
@@ -178,48 +177,34 @@ const getAgreementForTenant = async (tenantId: string, agreementId?: string) => 
 };
 
 const acceptAgreement = async (agreementId: string, tenantId: string) => {
-    // Atomic state transition: a retried request cannot accept (and notify) twice.
-    const agreement = await RentalAgreement.findOneAndUpdate(
-        { _id: agreementId, tenant: tenantId, status: "PENDING_TENANT" },
-        { $set: { status: "PENDING_OWNER", tenantAcceptedAt: new Date() } },
-        { returnDocument: "after" }
-    );
+    const agreement = await RentalAgreement.findOne({ _id: agreementId, tenant: tenantId });
     if (!agreement) {
-        const existing = await RentalAgreement.findOne({ _id: agreementId, tenant: tenantId });
-        if (!existing) throw new AppError(404, "Rental agreement not found");
-        throw new AppError(409, `Agreement cannot be accepted in state ${existing.status}`);
+        throw new AppError(404, "Rental agreement not found");
     }
+
+    if (agreement.status !== "PENDING_TENANT") {
+        throw new AppError(409, `Agreement cannot be accepted in state ${agreement.status}`);
+    }
+
+    agreement.status = "PENDING_OWNER";
+    agreement.tenantAcceptedAt = new Date();
+    await agreement.save();
 
     const tenantUser = await User.findById(tenantId);
     const tenantName = tenantUser?.name ?? "Tenant";
 
-    await notificationService.notify({
+    await notificationService.createNotification({
         recipient: agreement.owner.toString(),
         title: "Rental agreement accepted by tenant",
-        message: `${tenantName} has reviewed and accepted the rental agreement for your property. Please confirm it to activate the tenancy.`,
-        type: "rental_status",
+        message: `${tenantName} has reviewed and accepted the rental agreement for your property.`,
+        type: "rental_approved",
         referenceId: agreement.rental.toString(),
-        referenceType: "rental",
-        data: {
-            rentalId: agreement.rental.toString(),
-            agreementId: agreement._id.toString(),
-            propertyId: agreement.property.toString(),
-        },
-        dedupeKey: `agreement-accepted:${agreement._id.toString()}`,
+        referenceType: "property",
     });
-    emitDashboardUpdate({ userIds: [agreement.owner, agreement.tenant] }, "rental", "agreement_accepted", agreement.rental);
 
     return agreement.toObject();
 };
 
-<<<<<<< HEAD
-const confirmAgreement = async (agreementId: string, ownerId: string) => {
-    const agreement = await RentalAgreement.findOneAndUpdate(
-        { _id: agreementId, owner: ownerId, status: "PENDING_OWNER" },
-        { $set: { status: "ACTIVE", ownerAcceptedAt: new Date() } },
-        { returnDocument: "after" }
-    );
-=======
 
 const confirmAgreement = async (
     agreementId: string,
@@ -230,41 +215,10 @@ const confirmAgreement = async (
         owner: ownerId,
     });
 
->>>>>>> origin/dev
     if (!agreement) {
-        const existing = await RentalAgreement.findOne({ _id: agreementId, owner: ownerId });
-        if (!existing) throw new AppError(404, "Rental agreement not found");
-        throw new AppError(409, `Agreement cannot be confirmed in state ${existing.status}`);
+        throw new AppError(404, "Rental agreement not found");
     }
 
-<<<<<<< HEAD
-    // Update occupant status to ACTIVE
-    const occupant = await RentalOccupant.findById(agreement.occupant);
-    if (occupant) {
-        occupant.status = "ACTIVE";
-        await occupant.save();
-    }
-
-    // Check if all occupants have active agreements -> activate rental
-    const rental = await Rental.findById(agreement.rental);
-    if (rental) {
-        const allOccupants = await RentalOccupant.find({
-            rental: rental._id,
-            status: { $ne: "TERMINATED" },
-        });
-        const activeOccupants = allOccupants.filter((o) => o.status === "ACTIVE");
-
-        if (allOccupants.length > 0 && activeOccupants.length === allOccupants.length) {
-            rental.status = "active";
-            await rental.save();
-
-            if (rental.booking) {
-                const Booking = (await import("../bookings/model.js")).default;
-                await Booking.updateOne({ _id: rental.booking }, { $set: { status: "ACTIVE" } });
-            }
-        }
-    }
-=======
     if (agreement.status !== "PENDING_OWNER") {
         throw new AppError(
             409,
@@ -292,35 +246,16 @@ const confirmAgreement = async (
 
     // Do not activate the occupant or rental at owner approval.
     // Verified advance payment must drive activation in the payment service.
->>>>>>> origin/dev
 
-    await notificationService.notify({
+    await notificationService.createNotification({
         recipient: agreement.tenant.toString(),
-<<<<<<< HEAD
-        title: "Rental agreement confirmed!",
-        message: "The property owner has confirmed your agreement. Your tenancy is now ACTIVE.",
-        type: "rental_status",
-=======
         title: "Rental agreement approved",
         message:
             "The owner approved your rental agreement. Complete your advance payment within 72 hours to proceed.",
         type: "rental_approved",
->>>>>>> origin/dev
         referenceId: agreement.rental.toString(),
-        referenceType: "rental",
-        data: {
-            rentalId: agreement.rental.toString(),
-            agreementId: agreement._id.toString(),
-            propertyId: agreement.property.toString(),
-        },
-        dedupeKey: `agreement-confirmed:${agreement._id.toString()}`,
+        referenceType: "property",
     });
-    emitDashboardUpdate(
-        { userIds: [agreement.owner, agreement.tenant], admins: true },
-        "rental",
-        "agreement_confirmed",
-        agreement.rental
-    );
 
     return agreement.toObject();
 };
@@ -472,7 +407,7 @@ const setRentSplit = async (rentalId: string, ownerId: string, payload: SetRentS
             agreement.securityDepositShare = occItem.securityDepositShare;
             await agreement.save();
         } else {
-            const createdAgreement = await RentalAgreement.create({
+            await RentalAgreement.create({
                 rental: rental._id,
                 occupant: occupant._id,
                 tenant: occItem.userId,
@@ -486,29 +421,16 @@ const setRentSplit = async (rentalId: string, ownerId: string, payload: SetRentS
                 status: "PENDING_TENANT",
             });
 
-            await notificationService.notify({
+            await notificationService.createNotification({
                 recipient: occItem.userId,
                 title: "Added to shared rental agreement",
                 message: `You were added as an occupant for property rental. Please log in to review and accept your agreement.`,
-                type: "rental_status",
+                type: "rental_approved",
                 referenceId: rental._id.toString(),
-                referenceType: "rental",
-                data: {
-                    rentalId: rental._id.toString(),
-                    agreementId: createdAgreement._id.toString(),
-                    propertyId: rental.property.toString(),
-                },
-                dedupeKey: `agreement-created:${createdAgreement._id.toString()}`,
+                referenceType: "property",
             });
         }
     }
-
-    emitDashboardUpdate(
-        { userIds: [rental.owner, ...resolvedOccupants.map((occupant) => occupant.userId)] },
-        "rental",
-        "split_updated",
-        rental._id
-    );
 
     return {
         rentalId: rental._id.toString(),
@@ -581,18 +503,13 @@ const getOwnerRentals = async (ownerId: string) => {
 };
 
 const terminateRental = async (rentalId: string, ownerId: string) => {
-    // Only a rental that is not already ended/cancelled can be terminated, so
-    // tenants are not re-notified when the request is retried.
-    const rental = await Rental.findOneAndUpdate(
-        { _id: rentalId, owner: ownerId, status: { $in: ["scheduled", "active"] } },
-        { $set: { status: "ended" } },
-        { returnDocument: "after" }
-    );
+    const rental = await Rental.findOne({ _id: rentalId, owner: ownerId });
     if (!rental) {
-        const existing = await Rental.findOne({ _id: rentalId, owner: ownerId });
-        if (!existing) throw new AppError(404, "Rental not found or access denied");
-        throw new AppError(409, `Rental is already ${existing.status}`);
+        throw new AppError(404, "Rental not found or access denied");
     }
+
+    rental.status = "ended";
+    await rental.save();
 
     if (rental.booking) {
         const Booking = (await import("../bookings/model.js")).default;
@@ -611,20 +528,16 @@ const terminateRental = async (rentalId: string, ownerId: string) => {
     );
 
     const occupants = await RentalOccupant.find({ rental: rental._id });
-    const tenantIds = [...new Set(occupants.map((occ) => occ.tenant.toString()))];
-    for (const tenantId of tenantIds) {
-        await notificationService.notify({
-            recipient: tenantId,
+    for (const occ of occupants) {
+        await notificationService.createNotification({
+            recipient: occ.tenant.toString(),
             title: "Rental terminated",
             message: "Your rental agreement has been terminated by the property owner.",
-            type: "rental_status",
+            type: "rental_rejected",
             referenceId: rental._id.toString(),
-            referenceType: "rental",
-            data: { rentalId: rental._id.toString(), propertyId: rental.property.toString() },
-            dedupeKey: `rental-ended:${rental._id.toString()}`,
+            referenceType: "property",
         });
     }
-    emitDashboardUpdate({ userIds: [rental.owner, ...tenantIds], admins: true }, "rental", "terminated", rental._id);
 
     return { success: true, message: "Rental terminated successfully" };
 };
