@@ -430,8 +430,7 @@ const areAllCurrentOccupantsReady = async (
     return true;
 };
 
-const confirmAdvanceRental = async (bookingId: string) => {
-    const booking = await Booking.findById(bookingId).exec();
+const confirmAdvanceRental = async (bookingId: string) => {    const booking = await Booking.findById(bookingId).exec();
 
     if (!booking) throw new AppError(404, "Booking not found");
 
