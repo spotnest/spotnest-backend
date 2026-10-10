@@ -1,6 +1,8 @@
 import { Payment, Rental } from "../dashboard/tenantDashboard/model.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import { RentalOccupant } from "./model.js";
+import type { IRental } from "../dashboard/tenantDashboard/type.js";
 
 const SCHEDULER_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -41,6 +43,63 @@ const dueDateForMonth = (
     return dueDate;
 };
 
+const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
+
+const rentalTenantIds = async (rental: IRental): Promise<string[]> => {
+    const occupants = await RentalOccupant.find({ rental: rental._id }).select("tenant");
+    return [...new Set([rental.tenant.toString(), ...occupants.map((occupant) => occupant.tenant.toString())])];
+};
+
+/**
+ * Notifies everyone on a rental about a lifecycle change. Dedupe keys make
+ * this safe to run on every scheduler pass.
+ */
+const notifyRentalLifecycle = async (
+    rental: IRental,
+    event: "started" | "ended",
+    tenantIds: string[]
+): Promise<void> => {
+    const data = { rentalId: rental._id.toString(), propertyId: rental.property.toString() };
+    const tenantMessage = event === "started"
+        ? "Your lease has started and your rental is now active."
+        : "Your lease period has ended and the rental is now closed.";
+    const ownerMessage = event === "started"
+        ? "A scheduled rental for your property is now active."
+        : "A rental for your property has reached its lease end date and is now closed.";
+
+    await Promise.all([
+        ...tenantIds.map((tenantId) =>
+            notificationService.notify({
+                recipient: tenantId,
+                title: event === "started" ? "Lease started" : "Lease ended",
+                message: tenantMessage,
+                type: "rental_status",
+                referenceId: rental._id.toString(),
+                referenceType: "rental",
+                data,
+                dedupeKey: `rental-${event}:${rental._id.toString()}`,
+            })
+        ),
+        notificationService.notify({
+            recipient: rental.owner.toString(),
+            title: event === "started" ? "Rental started" : "Rental ended",
+            message: ownerMessage,
+            type: "rental_status",
+            referenceId: rental._id.toString(),
+            referenceType: "rental",
+            data,
+            dedupeKey: `rental-${event}:${rental._id.toString()}`,
+        }),
+    ]);
+
+    emitDashboardUpdate(
+        { userIds: [rental.owner, ...tenantIds], admins: true },
+        "rental",
+        "status_changed",
+        rental._id
+    );
+};
+
 // ============================================================
 // RENTAL SCHEDULER
 // ============================================================
@@ -66,6 +125,7 @@ export const runRentalScheduler = async (): Promise<void> => {
         for (const rental of dueScheduledRentals) {
             rental.status = "active";
             await rental.save();
+            await notifyRentalLifecycle(rental, "started", await rentalTenantIds(rental));
         }
 
         // ====================================================
@@ -100,6 +160,8 @@ export const runRentalScheduler = async (): Promise<void> => {
                     },
                 }
             );
+
+            await notifyRentalLifecycle(rental, "ended", await rentalTenantIds(rental));
         }
 
         // ====================================================
@@ -292,9 +354,35 @@ export const runRentalScheduler = async (): Promise<void> => {
         });
 
         for (const payment of pendingPayments) {
-            payment.status = "OVERDUE";
+            // Conditional update: only the pass that actually moves the
+            // payment to OVERDUE notifies the owner and refreshes dashboards.
+            const transition = await Payment.updateOne(
+                { _id: payment._id, status: "PENDING" },
+                { $set: { status: "OVERDUE" } }
+            );
+            if (transition.modifiedCount === 0) continue;
 
-            await payment.save();
+            if (payment.owner) {
+                await notificationService.notify({
+                    recipient: payment.owner.toString(),
+                    title: "Rent overdue",
+                    message: `Rent of ${formatInr(payment.amount)} for ${payment.billingMonth} is overdue.`,
+                    type: "rent_due",
+                    referenceId: payment._id.toString(),
+                    referenceType: "payment",
+                    data: {
+                        paymentId: payment._id.toString(),
+                        ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
+                    },
+                    dedupeKey: `rent-overdue-owner:${payment._id.toString()}`,
+                });
+            }
+            emitDashboardUpdate(
+                { userIds: [payment.tenant, payment.owner], admins: true },
+                "payment",
+                "overdue",
+                payment._id
+            );
         }
 
         // ====================================================
@@ -339,6 +427,9 @@ export const runRentalScheduler = async (): Promise<void> => {
 
             let notificationTitle = "";
             let notificationMessage = "";
+            // Reminders run on every 6-hour pass; the key limits each
+            // reminder to once (overdue alerts: once per day).
+            let dedupeKey = `rent-reminder:${payment._id.toString()}:d${diffDays}`;
 
             // 7 DAYS BEFORE
             if (diffDays === 7) {
@@ -387,6 +478,8 @@ export const runRentalScheduler = async (): Promise<void> => {
                 notificationTitle =
                     "Rent Overdue Alert";
 
+                dedupeKey = `rent-overdue:${payment._id.toString()}:${today.toISOString().slice(0, 10)}`;
+
                 notificationMessage =
                     `Your monthly rent of ₹${payment.amount.toLocaleString(
                         "en-IN"
@@ -399,26 +492,20 @@ export const runRentalScheduler = async (): Promise<void> => {
                 continue;
             }
 
-            await notificationService.createNotification(
-                {
-                    recipient:
-                        payment.tenant.toString(),
-
-                    title:
-                        notificationTitle,
-
-                    message:
-                        notificationMessage,
-
-                    type: "system",
-
-                    referenceId:
-                        payment._id.toString(),
-
-                    referenceType:
-                        "booking",
-                }
-            );
+            await notificationService.notify({
+                recipient: payment.tenant.toString(),
+                title: notificationTitle,
+                message: notificationMessage,
+                type: "rent_due",
+                referenceId: payment._id.toString(),
+                referenceType: "payment",
+                data: {
+                    paymentId: payment._id.toString(),
+                    ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
+                    ...(payment.booking ? { bookingId: payment.booking.toString() } : {}),
+                },
+                dedupeKey,
+            });
         }
     } catch (error) {
         console.error(

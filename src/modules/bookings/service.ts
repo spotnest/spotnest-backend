@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/AppError.js";
 import Booking from "./model.js";
 import bookingRepository from "./repository.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import type { CreateBookingInput } from "./validation.js";
 import type { ReviewBookingInput } from "./validation.js";
 
@@ -75,14 +76,22 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         ...(payload.notes ? { notes: payload.notes } : {}),
     });
 
-    await notificationService.createNotification({
+    await notificationService.notify({
         recipient: property.owner.toString(),
         title: "New rental request",
         message: `A tenant requested to rent ${property.title}.`,
         type: "rental_request",
         referenceId: booking._id.toString(),
         referenceType: "booking",
+        data: { bookingId: booking._id.toString(), propertyId: property._id.toString() },
+        dedupeKey: `rental-request:${booking._id.toString()}`,
     });
+    emitDashboardUpdate(
+        { userIds: [property.owner, userId], admins: true },
+        "booking",
+        "created",
+        booking._id
+    );
 
     return booking.toObject();
 };
@@ -106,27 +115,40 @@ const listOwnerRequests = async (ownerId: string) => {
 };
 
 const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBookingInput) => {
-    const booking = await bookingRepository.findForOwner(bookingId, ownerId);
-    if (!booking) throw new AppError(404, "Rental request not found");
-    if (booking.status !== "PENDING") throw new AppError(409, "This rental request has already been reviewed");
+    const approved = input.decision === "APPROVED";
+    const now = new Date();
+    const booking = await bookingRepository.reviewPendingForOwner(bookingId, ownerId, {
+        status: input.decision,
+        paymentStatus: approved ? "ADVANCE_PAYMENT_PENDING" : "NOT_DUE",
+        ...(approved ? { approvedAt: now } : { rejectedAt: now }),
+        ...(input.decisionNote ? { decisionNote: input.decisionNote } : {}),
+    });
 
-    booking.status = input.decision;
-    booking.paymentStatus = input.decision === "APPROVED" ? "ADVANCE_PAYMENT_PENDING" : "NOT_DUE";
-    if (input.decision === "APPROVED") booking.approvedAt = new Date();
-    else booking.rejectedAt = new Date();
-    if (input.decisionNote) booking.decisionNote = input.decisionNote;
-    await booking.save();
+    if (!booking) {
+        const existing = await bookingRepository.findForOwner(bookingId, ownerId);
+        if (!existing) throw new AppError(404, "Rental request not found");
+        throw new AppError(409, "This rental request has already been reviewed");
+    }
 
-    await notificationService.createNotification({
+    // Emitted only after the decision is persisted.
+    await notificationService.notify({
         recipient: booking.userId.toString(),
-        title: input.decision === "APPROVED" ? "Rental request approved" : "Rental request rejected",
-        message: input.decision === "APPROVED"
+        title: approved ? "Rental request approved" : "Rental request rejected",
+        message: approved
             ? "Your rental request was approved. You can now pay the advance."
             : "Your rental request was rejected by the property owner.",
-        type: input.decision === "APPROVED" ? "rental_approved" : "rental_rejected",
+        type: approved ? "rental_approved" : "rental_rejected",
         referenceId: booking._id.toString(),
         referenceType: "booking",
+        data: { bookingId: booking._id.toString(), propertyId: booking.propertyId.toString() },
+        dedupeKey: `rental-request-decision:${booking._id.toString()}`,
     });
+    emitDashboardUpdate(
+        { userIds: [booking.userId, booking.ownerId], admins: true },
+        "booking",
+        approved ? "approved" : "rejected",
+        booking._id
+    );
 
     return booking.toObject();
 };

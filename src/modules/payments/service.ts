@@ -11,6 +11,8 @@ import { RentalOccupant } from "../rentals/model.js";
 import notificationService from "../notifications/service.js";
 import User from "../auth/model.js";
 import { UserRole } from "../auth/type.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
+import type { IPayment } from "../dashboard/tenantDashboard/type.js";
 
 const createGatewayOrder = async (input: {
     bookingId: string;
@@ -167,7 +169,7 @@ const confirmAdvanceRental = async (bookingId: string) => {
 
     const now = new Date();
     const rentalStatus: IRental["status"] = booking.startDate <= now ? "active" : "scheduled";
-    const rental = await Rental.findOneAndUpdate(
+    const upsertRental = () => Rental.findOneAndUpdate(
         { booking: booking._id },
         {
             $setOnInsert: {
@@ -183,8 +185,18 @@ const confirmAdvanceRental = async (bookingId: string) => {
             },
             $set: { status: rentalStatus },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );
+    // The client verify call and the Razorpay webhook can confirm the same
+    // advance concurrently; the losing upsert hits the unique booking index.
+    // Retrying once then matches the rental the other request created.
+    let rental;
+    try {
+        rental = await upsertRental();
+    } catch (error) {
+        if ((error as { code?: number }).code !== 11000) throw error;
+        rental = await upsertRental();
+    }
 
     booking.status = rentalStatus === "active" ? "ACTIVE" : "CONFIRMED";
     booking.paymentStatus = "PAID";
@@ -203,51 +215,113 @@ const confirmAdvanceRental = async (bookingId: string) => {
         { $set: { rental: rental?._id, occupant: occupant._id } }
     );
 
-    await User.updateOne(
+    const roleUpdate = await User.updateOne(
         { _id: booking.userId, role: UserRole.USER },
         { $set: { role: UserRole.TENANT } }
     ).exec();
+    if (roleUpdate.modifiedCount > 0) {
+        // The client refreshes its session so tenant-only pages unlock.
+        emitDashboardUpdate({ userIds: [booking.userId], admins: true }, "user", "role_changed", booking.userId);
+    }
 
     return booking;
 };
 
+const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
+
+const paymentNotificationData = (payment: IPayment) => ({
+    paymentId: payment._id.toString(),
+    ...(payment.booking ? { bookingId: payment.booking.toString() } : {}),
+    ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
+    ...(payment.property ? { propertyId: payment.property.toString() } : {}),
+});
+
+const paymentDashboardTargets = (payment: IPayment, ownerId?: { toString(): string }) => ({
+    userIds: [payment.tenant, payment.owner ?? ownerId],
+    admins: true,
+});
+
+/**
+ * Called exactly once per payment, by whichever path (client verify or
+ * webhook) performed the PAID transition. Dedupe keys additionally guard
+ * against a retried request re-running this.
+ */
 const notifyPaymentSuccess = async (
-    booking: { _id: { toString(): string }; userId: { toString(): string }; ownerId: { toString(): string } },
-    payment: { type: string; amount: number; billingMonth?: string }
+    booking: { _id: { toString(): string }; ownerId: { toString(): string } },
+    payment: IPayment
 ) => {
-    try {
-        const isAdvance = payment.type === "ADVANCE";
-        const titleTenant = isAdvance ? "Advance Payment Successful" : "Rent Payment Successful";
-        const msgTenant = isAdvance
-            ? `Your advance payment of ₹${payment.amount.toLocaleString("en-IN")} was received. Your rental booking is confirmed!`
-            : `Your rent payment of ₹${payment.amount.toLocaleString("en-IN")} for ${payment.billingMonth} was received successfully.`;
+    const isAdvance = payment.type === "ADVANCE";
+    const amount = formatInr(payment.amount);
+    const ownerId = (payment.owner ?? booking.ownerId).toString();
+    const data = paymentNotificationData(payment);
 
-        const titleOwner = isAdvance ? "Advance Payment Received" : "Rent Payment Received";
-        const msgOwner = isAdvance
-            ? `Advance payment of ₹${payment.amount.toLocaleString("en-IN")} was received for your property booking.`
-            : `Rent payment of ₹${payment.amount.toLocaleString("en-IN")} for ${payment.billingMonth} was received from your tenant.`;
+    await Promise.all([
+        notificationService.notify({
+            recipient: payment.tenant.toString(),
+            title: isAdvance ? "Advance Payment Successful" : "Rent Payment Successful",
+            message: isAdvance
+                ? `Your advance payment of ${amount} was received. Your rental booking is confirmed!`
+                : `Your rent payment of ${amount} for ${payment.billingMonth} was received successfully.`,
+            type: "payment_success",
+            referenceId: payment._id.toString(),
+            referenceType: "payment",
+            data,
+            dedupeKey: `payment-success:${payment._id.toString()}`,
+        }),
+        notificationService.notify({
+            recipient: ownerId,
+            title: isAdvance ? "Advance Payment Received" : "Rent Payment Received",
+            message: isAdvance
+                ? `Advance payment of ${amount} was received for your property booking.`
+                : `Rent payment of ${amount} for ${payment.billingMonth} was received from your tenant.`,
+            type: "payment_success",
+            referenceId: payment._id.toString(),
+            referenceType: "payment",
+            data,
+            dedupeKey: `payment-success:${payment._id.toString()}`,
+        }),
+    ]);
 
-        await Promise.allSettled([
-            notificationService.createNotification({
-                recipient: booking.userId.toString(),
-                title: titleTenant,
-                message: msgTenant,
-                type: "system",
-                referenceId: booking._id.toString(),
-                referenceType: "booking",
-            }),
-            notificationService.createNotification({
-                recipient: booking.ownerId.toString(),
-                title: titleOwner,
-                message: msgOwner,
-                type: "system",
-                referenceId: booking._id.toString(),
-                referenceType: "booking",
-            }),
-        ]);
-    } catch (e) {
-        console.warn("[PAYMENT_NOTIFICATION_ERROR]", e);
+    emitDashboardUpdate(paymentDashboardTargets(payment, booking.ownerId), "payment", "paid", payment._id);
+};
+
+const notifyPaymentFailed = async (payment: IPayment, gatewayPaymentId: string) => {
+    const isAdvance = payment.type === "ADVANCE";
+    await notificationService.notify({
+        recipient: payment.tenant.toString(),
+        title: isAdvance ? "Advance Payment Failed" : "Rent Payment Failed",
+        message: isAdvance
+            ? `Your advance payment of ${formatInr(payment.amount)} could not be completed. No money was captured; please try again.`
+            : `Your rent payment of ${formatInr(payment.amount)} for ${payment.billingMonth} could not be completed. Please try again.`,
+        type: "payment_failed",
+        referenceId: payment._id.toString(),
+        referenceType: "payment",
+        data: paymentNotificationData(payment),
+        // One notification per failed gateway attempt.
+        dedupeKey: `payment-failed:${payment._id.toString()}:${gatewayPaymentId}`,
+    });
+    emitDashboardUpdate(paymentDashboardTargets(payment), "payment", "failed", payment._id);
+};
+
+/** Shared by the client verify call and the webhook once a capture is confirmed. */
+const settleCapturedPayment = async (payment: IPayment, gatewayPaymentId: string) => {
+    const updated = await paymentRepository.markPaidIfUnpaid(payment._id.toString(), {
+        razorpayPaymentId: gatewayPaymentId,
+        paidAt: new Date(),
+        referenceId: gatewayPaymentId,
+    });
+
+    // Re-running the advance confirmation is idempotent (upserts), and makes
+    // sure a rental exists even if an earlier attempt failed half-way.
+    const confirmedBooking = payment.type === "ADVANCE" && payment.booking
+        ? await confirmAdvanceRental(payment.booking.toString())
+        : null;
+
+    if (updated) {
+        const booking = confirmedBooking ?? (payment.booking ? await Booking.findById(payment.booking).exec() : null);
+        if (booking) await notifyPaymentSuccess(booking, updated);
     }
+    return confirmedBooking;
 };
 
 const verifyPayment = async (payload: VerifyPaymentInput, userId: string) => {
@@ -268,18 +342,8 @@ const verifyPayment = async (payload: VerifyPaymentInput, userId: string) => {
     }
 
     if (payload.razorpay_order_id.startsWith("order_mock_")) {
-        payment.status = "PAID";
-        payment.razorpayPaymentId = payload.razorpay_payment_id || `pay_mock_${Date.now()}`;
-        payment.paidAt = new Date();
-        payment.referenceId = payment.razorpayPaymentId;
-        await payment.save();
-
-        const updatedBooking = payload.type === "ADVANCE"
-            ? await confirmAdvanceRental(booking._id.toString())
-            : booking;
-
-        await notifyPaymentSuccess(booking, payment);
-        return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: updatedBooking.status };
+        const confirmed = await settleCapturedPayment(payment, payload.razorpay_payment_id || `pay_mock_${Date.now()}`);
+        return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: (confirmed ?? booking).status };
     }
 
     if (payment.razorpayOrderId !== payload.razorpay_order_id) {
@@ -307,18 +371,8 @@ const verifyPayment = async (payload: VerifyPaymentInput, userId: string) => {
         throw new AppError(409, "Payment has not been captured yet");
     }
 
-    payment.status = "PAID";
-    payment.razorpayPaymentId = payload.razorpay_payment_id;
-    payment.paidAt = new Date();
-    payment.referenceId = payload.razorpay_payment_id;
-    await payment.save();
-
-    const updatedBooking = payload.type === "ADVANCE"
-        ? await confirmAdvanceRental(booking._id.toString())
-        : booking;
-
-    await notifyPaymentSuccess(booking, payment);
-    return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: updatedBooking.status };
+    const confirmed = await settleCapturedPayment(payment, payload.razorpay_payment_id);
+    return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: (confirmed ?? booking).status };
 };
 
 const handleWebhook = async (event: {
@@ -332,27 +386,14 @@ const handleWebhook = async (event: {
     if (!payment) return;
 
     if (event.event === "payment.captured" && gatewayPayment.status === "captured") {
-        if (payment.status === "PAID") {
-            if (payment.type === "ADVANCE" && payment.booking) await confirmAdvanceRental(payment.booking.toString());
-            return;
-        }
-        if (Number(gatewayPayment.amount) !== Math.round(payment.amount * 100) || gatewayPayment.currency !== "INR") {
+        if (payment.status !== "PAID" &&
+            (Number(gatewayPayment.amount) !== Math.round(payment.amount * 100) || gatewayPayment.currency !== "INR")) {
             throw new AppError(400, "Webhook payment amount or currency mismatch");
         }
-        payment.status = "PAID";
-        payment.razorpayPaymentId = gatewayPayment.id;
-        payment.paidAt = new Date();
-        payment.referenceId = gatewayPayment.id;
-        await payment.save();
-        if (payment.type === "ADVANCE" && payment.booking) {
-            await confirmAdvanceRental(payment.booking.toString());
-        }
-        const b = payment.booking ? await Booking.findById(payment.booking).exec() : null;
-        if (b) await notifyPaymentSuccess(b, payment);
+        await settleCapturedPayment(payment, gatewayPayment.id);
     } else if (event.event === "payment.failed") {
-        payment.status = "FAILED";
-        payment.referenceId = gatewayPayment.id;
-        await payment.save();
+        const failed = await paymentRepository.markFailedIfUnpaid(payment._id.toString(), gatewayPayment.id);
+        if (failed) await notifyPaymentFailed(failed, gatewayPayment.id);
     }
 };
 

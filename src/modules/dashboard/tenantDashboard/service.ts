@@ -1,6 +1,7 @@
 
 import { AppError } from "../../../shared/errors/AppError.js";
 import notificationService from "../../notifications/service.js";
+import { emitDashboardUpdate } from "../../../shared/socket/index.js";
 import repository from "./repository.js";
 import type { IMaintenanceRequest, IPayment, IRental } from "./type.js";
 import type { CreateMaintenanceInput } from "./validation.js";
@@ -61,14 +62,17 @@ const getMaintenance = async (tenantId: string) => {
 const createMaintenance = async (tenantId: string, input: CreateMaintenanceInput) => {
     const rental = await getRental(tenantId);
     const request = await repository.createMaintenance({ rental: rental._id, property: rental.property._id, tenant: rental.tenant, owner: rental.owner._id, title: input.title, description: input.description, priority: input.priority, ...(input.category ? { category: input.category } : {}) });
-    await notificationService.createNotification({
+    await notificationService.notify({
         recipient: rental.owner._id.toString(),
         title: "New maintenance request",
         message: `${input.title} was reported by your tenant.`,
         type: "system",
-        referenceId: request._id.toString(),
-        referenceType: "property"
+        referenceId: rental._id.toString(),
+        referenceType: "rental",
+        data: { rentalId: rental._id.toString(), propertyId: rental.property._id.toString() },
+        dedupeKey: `maintenance-created:${request._id.toString()}`,
     });
+    emitDashboardUpdate({ userIds: [rental.owner._id, tenantId] }, "maintenance", "created", request._id);
     return maintenanceResponse(request);
 };
 

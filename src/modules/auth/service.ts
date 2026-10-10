@@ -53,6 +53,7 @@ import {
 
 import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 
 // -----------------------------------------------------
 // OWNER APPROVAL REQUEST HELPER
@@ -80,6 +81,7 @@ const submitOwnerForAdminReview = async (
             })
         )
     );
+    emitDashboardUpdate({ admins: true }, "user", "verification_changed", user._id);
 
     settingsRepository
         .getGlobal()
@@ -292,6 +294,9 @@ const register = async (
 
         throw error;
     }
+
+    // Admin dashboards show user totals and recent registrations.
+    emitDashboardUpdate({ admins: true }, "user", "created", user._id);
 
     // -------------------------------------------------
     // OWNER RESPONSE
@@ -1300,6 +1305,8 @@ const approveOwnerVerification =
             referenceId: userId,
             referenceType: "user",
         });
+        // The owner's client refreshes its session to unlock owner features.
+        emitDashboardUpdate({ userIds: [userId], admins: true }, "user", "verification_changed", userId);
 
         // Send approval email if enabled.
         settingsRepository
@@ -1396,6 +1403,7 @@ const rejectOwnerVerification = async (
         referenceId: userId,
         referenceType: "user",
     });
+    emitDashboardUpdate({ userIds: [userId], admins: true }, "user", "verification_changed", userId);
 
     // Send rejection email.
     await sendOwnerRejectedEmail(
