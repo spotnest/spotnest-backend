@@ -678,7 +678,7 @@ const verifyPayment = async (
 
     payment.status = "PAID";
     payment.razorpayPaymentId = payload.razorpay_payment_id;
-    payment.paidAt = new Date();
+    payment.paidAt = new Date(gatewayPayment.created_at * 1000);
     payment.referenceId = payload.razorpay_payment_id;
 
     await payment.save();
@@ -726,7 +726,73 @@ const handleWebhook = async (event: {
         };
     };
 }) => {
-    // Keep the existing handler body for now.
+    const paymentEntity = event.payload?.payment?.entity;
+
+    if (!paymentEntity) {
+        return;
+    }
+
+    const orderId = paymentEntity.order_id;
+    const paymentId = paymentEntity.id;
+
+    const paymentRecord =
+        (orderId && (await paymentRepository.findByOrderId(orderId))) ||
+        (paymentId && (await paymentRepository.findByPaymentId(paymentId))) ||
+        null;
+
+    if (!paymentRecord) {
+        return;
+    }
+
+    if (event.event === "payment.failed") {
+        paymentRecord.status = "FAILED";
+        await paymentRecord.save();
+        return;
+    }
+
+    if (event.event !== "payment.captured") {
+        return;
+    }
+
+    if (!paymentId) {
+        return;
+    }
+
+    if (
+        paymentRecord.status === "PAID" &&
+        paymentRecord.razorpayPaymentId === paymentId
+    ) {
+        return;
+    }
+
+    paymentRecord.status = "PAID";
+    paymentRecord.razorpayPaymentId = paymentId;
+    paymentRecord.paidAt = new Date(
+        (paymentEntity.created_at ?? event.created_at ?? Math.floor(Date.now() / 1000)) * 1000
+    );
+    paymentRecord.referenceId = paymentId;
+
+    await paymentRecord.save();
+
+    const booking = await Booking.findById(paymentRecord.booking).exec();
+
+    if (!booking) {
+        return;
+    }
+
+    if (paymentRecord.type === "ADVANCE") {
+        const result = await confirmAdvanceRental(booking._id.toString());
+
+        if (result.expired) {
+            await notifyLateAdvancePayment(booking);
+        } else {
+            await notifyPaymentSuccess(booking, paymentRecord);
+        }
+
+        return;
+    }
+
+    await notifyPaymentSuccess(booking, paymentRecord);
 };
 
 const ensureMonthlyRentPayments = async (rentalId: string) => {
