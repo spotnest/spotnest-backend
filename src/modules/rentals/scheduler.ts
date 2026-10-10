@@ -1,8 +1,10 @@
+
 import { Types } from "mongoose";
+import Booking from "../bookings/model.js";
 import { Payment, Rental } from "../dashboard/tenantDashboard/model.js";
 import Notification from "../notifications/model.js";
 import notificationService from "../notifications/service.js";
-import { RentalOccupant } from "./model.js";
+import { RentalAgreement, RentalOccupant } from "./model.js";
 
 const SCHEDULER_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -27,12 +29,6 @@ const startOfUtcDay = (date: Date): Date =>
         )
     );
 
-const endOfUtcDay = (date: Date): Date =>
-    new Date(startOfUtcDay(date).getTime() + DAY_MS - 1);
-
-const sameUtcCalendarDay = (a: Date, b: Date): boolean =>
-    startOfUtcDay(a).getTime() === startOfUtcDay(b).getTime();
-
 const getBillingMonth = (date: Date): string =>
     `${date.getUTCFullYear()}-${String(
         date.getUTCMonth() + 1
@@ -46,10 +42,7 @@ const isDuplicateKeyError = (error: unknown): boolean =>
 
 /**
  * Uses the lease-start day as the monthly due day.
- * For short months, clamps the day to that month's last day.
- *
- * Example: a lease starting on January 31 has a February
- * due date of February 28 or 29.
+ * Clamps dates such as January 31 to the last day of shorter months.
  */
 const dueDateForMonth = (
     leaseStart: Date,
@@ -124,14 +117,6 @@ const getReminderDetails = (
     return null;
 };
 
-/**
- * Sends a reminder only if one with the same payment and
- * reminder title does not already exist.
- *
- * This prevents repeat reminders during normal sequential runs.
- * A unique database deduplication key is needed for a strict
- * cross-process guarantee; see the note below.
- */
 const sendReminderOnce = async (
     payment: {
         _id: unknown;
@@ -160,20 +145,14 @@ const sendReminderOnce = async (
         message: details.message,
         type: "system",
         referenceId: paymentId,
-
-        // The current notification schema does not support
-        // "payment" as a referenceType. Keep "booking" for
-        // compatibility until that schema is extended.
+        // Keep compatible with the current notification schema.
         referenceType: "booking",
     });
 };
 
 /**
- * Ensures old rentals have a primary occupant only when
- * no occupant records exist at all.
- *
- * A rental with pending, left, or terminated occupants must
- * not silently create a new active occupant.
+ * Backward compatibility for older active rentals.
+ * Never creates an occupant for a scheduled rental.
  */
 const ensureLegacyOccupant = async (rental: {
     _id: Types.ObjectId;
@@ -213,21 +192,21 @@ const ensureLegacyOccupant = async (rental: {
 };
 
 /**
- * Generates monthly payments using an atomic upsert.
+ * Generates monthly rent payments for active occupants.
  *
- * The Payment model must have its unique index:
- * rental + occupant + type + billingMonth.
+ * Requires a unique index for:
+ * rental + occupant + type + billingMonth
  */
 const generateMonthlyPayments = async (
-rental: {
-    _id: Types.ObjectId;
-    booking?: Types.ObjectId;
-    property: Types.ObjectId;
-    owner: Types.ObjectId;
-    monthlyRent: number;
-    leaseStart: Date;
-    leaseEnd: Date;
-},
+    rental: {
+        _id: Types.ObjectId;
+        booking?: Types.ObjectId;
+        property: Types.ObjectId;
+        owner: Types.ObjectId;
+        monthlyRent: number;
+        leaseStart: Date;
+        leaseEnd: Date;
+    },
     occupants: Array<{
         _id: unknown;
         tenant: unknown;
@@ -279,7 +258,6 @@ rental: {
                     continue;
                 }
 
-                // Do not bill before this occupant joined.
                 if (
                     occupant.joinedAt &&
                     startOfUtcDay(occupant.joinedAt) >
@@ -288,7 +266,6 @@ rental: {
                     continue;
                 }
 
-                // Do not bill after the occupant left.
                 if (
                     occupant.leftAt &&
                     startOfUtcDay(occupant.leftAt) <
@@ -298,12 +275,9 @@ rental: {
                 }
 
                 try {
-
                     await Payment.findOneAndUpdate(
                         {
-                            rental: new Types.ObjectId(
-                                String(rental._id)
-                            ),
+                            rental: rental._id,
                             occupant: new Types.ObjectId(
                                 String(occupant._id)
                             ),
@@ -335,10 +309,7 @@ rental: {
                             setDefaultsOnInsert: true,
                         }
                     );
-
                 } catch (error) {
-                    // Safe only when the unique index exists
-                    // and the duplicate is this payment key.
                     if (!isDuplicateKeyError(error)) {
                         throw error;
                     }
@@ -350,8 +321,129 @@ rental: {
     }
 };
 
+/**
+ * Expires agreements when their exact payment deadline passes.
+ * An expired agreement must never be activated by the scheduler.
+ */
+const expireUnpaidAgreements = async (
+    now: Date
+): Promise<void> => {
+    await RentalAgreement.updateMany(
+        {
+            status: "APPROVED_PENDING_PAYMENT",
+            paymentDeadline: { $lte: now },
+        },
+        {
+            $set: { status: "EXPIRED" },
+        }
+    );
+};
+
+/**
+ * Activates a scheduled rental only when every current occupant:
+ * - has ACTIVE occupant status;
+ * - has an ACTIVE agreement;
+ * - has an advancePaidAt timestamp;
+ * - has a PAID advance payment.
+ */
+const activateEligibleScheduledRentals = async (
+    today: Date,
+    tomorrow: Date
+): Promise<void> => {
+    const scheduledRentals = await Rental.find({
+        status: "scheduled",
+        leaseStart: { $lt: tomorrow },
+        leaseEnd: { $gte: today },
+    })
+        .select("_id booking")
+        .lean();
+
+    for (const rental of scheduledRentals) {
+        const occupants = await RentalOccupant.find({
+            rental: rental._id,
+            status: { $nin: ["TERMINATED", "LEFT"] },
+        })
+            .select("_id tenant status")
+            .lean();
+
+        if (occupants.length === 0) {
+            continue;
+        }
+
+        let allEligible = true;
+
+        for (const occupant of occupants) {
+            if (occupant.status !== "ACTIVE") {
+                allEligible = false;
+                break;
+            }
+
+            const agreement = await RentalAgreement.findOne({
+                rental: rental._id,
+                tenant: occupant.tenant,
+            })
+                .select("_id status advancePaidAt")
+                .lean();
+
+            if (
+                !agreement ||
+                agreement.status !== "ACTIVE" ||
+                !agreement.advancePaidAt
+            ) {
+                allEligible = false;
+                break;
+            }
+
+            const paidAdvance = await Payment.exists({
+                rental: rental._id,
+                tenant: occupant.tenant,
+                type: "ADVANCE",
+                status: "PAID",
+            });
+
+            if (!paidAdvance) {
+                allEligible = false;
+                break;
+            }
+        }
+
+        if (!allEligible) {
+            continue;
+        }
+
+        // Conditional update avoids overwriting a changed rental state.
+        const activation = await Rental.updateOne(
+            {
+                _id: rental._id,
+                status: "scheduled",
+                leaseStart: { $lt: tomorrow },
+                leaseEnd: { $gte: today },
+            },
+            {
+                $set: { status: "active" },
+            }
+        );
+
+        if (activation.modifiedCount === 0) {
+            continue;
+        }
+
+        if (rental.booking) {
+            await Booking.updateOne(
+                {
+                    _id: rental.booking,
+                    status: { $in: ["CONFIRMED", "APPROVED"] },
+                },
+                {
+                    $set: { status: "ACTIVE" },
+                }
+            );
+        }
+    }
+};
+
 export const runRentalScheduler = async (): Promise<void> => {
-    // Prevent overlapping executions in the same process.
+    // Prevent overlapping runs in this Node.js process.
     if (schedulerRunning) {
         return;
     }
@@ -361,10 +453,14 @@ export const runRentalScheduler = async (): Promise<void> => {
     try {
         const now = new Date();
         const today = startOfUtcDay(now);
-        const tomorrow = new Date(today.getTime() + DAY_MS);
+        const tomorrow = new Date(
+            today.getTime() + DAY_MS
+        );
 
-        // 1. End expired rentals first.
-        // A lease remains valid through its leaseEnd calendar day.
+        // 1. Expire agreements whose 72-hour deadline has passed.
+        await expireUnpaidAgreements(now);
+
+        // 2. End rentals whose lease-end calendar day has passed.
         const expiredRentals = await Rental.find({
             status: { $in: ["scheduled", "active"] },
             leaseEnd: { $lt: today },
@@ -382,7 +478,9 @@ export const runRentalScheduler = async (): Promise<void> => {
                     _id: { $in: expiredRentalIds },
                     status: { $in: ["scheduled", "active"] },
                 },
-                { $set: { status: "ended" } }
+                {
+                    $set: { status: "ended" },
+                }
             );
 
             await RentalOccupant.updateMany(
@@ -399,17 +497,14 @@ export const runRentalScheduler = async (): Promise<void> => {
             );
         }
 
-        // 2. Activate scheduled rentals on their lease-start day.
-        await Rental.updateMany(
-            {
-                status: "scheduled",
-                leaseStart: { $lt: tomorrow },
-                leaseEnd: { $gte: today },
-            },
-            { $set: { status: "active" } }
+        // 3. Never activate scheduled rentals without valid agreements
+        // and paid advances for all current occupants.
+        await activateEligibleScheduledRentals(
+            today,
+            tomorrow
         );
 
-        // 3. Fetch active rentals with only required fields.
+        // 4. Find active rentals eligible for monthly billing.
         const activeRentals = await Rental.find({
             status: "active",
             leaseStart: { $lt: tomorrow },
@@ -417,15 +512,14 @@ export const runRentalScheduler = async (): Promise<void> => {
         })
             .select(
                 "_id booking property owner tenant monthlyRent " +
-                "securityDeposit leaseStart leaseEnd"
+                    "securityDeposit leaseStart leaseEnd"
             )
             .lean();
 
         for (const rental of activeRentals) {
-            // Backward compatibility for older records.
+            // Compatibility for older active rental records.
             await ensureLegacyOccupant(rental);
 
-            // Only ACTIVE occupants may be billed.
             const occupants = await RentalOccupant.find({
                 rental: rental._id,
                 status: "ACTIVE",
@@ -446,17 +540,19 @@ export const runRentalScheduler = async (): Promise<void> => {
             );
         }
 
-        // 4. Mark overdue payments in one database operation.
+        // 5. Mark unpaid monthly rent past its due date as overdue.
         await Payment.updateMany(
             {
                 type: "MONTHLY_RENT",
                 status: "PENDING",
                 dueDate: { $lt: today },
             },
-            { $set: { status: "OVERDUE" } }
+            {
+                $set: { status: "OVERDUE" },
+            }
         );
 
-        // 5. Find only unpaid monthly payments with a due date.
+        // 6. Send due-date reminders.
         const activePayments = await Payment.find({
             type: "MONTHLY_RENT",
             status: { $in: ["PENDING", "OVERDUE", "DUE"] },
@@ -477,7 +573,8 @@ export const runRentalScheduler = async (): Promise<void> => {
             );
 
             const diffDays = Math.round(
-                (dueDay.getTime() - today.getTime()) / DAY_MS
+                (dueDay.getTime() - today.getTime()) /
+                    DAY_MS
             );
 
             const details = getReminderDetails(
@@ -494,8 +591,6 @@ export const runRentalScheduler = async (): Promise<void> => {
             try {
                 await sendReminderOnce(payment, details);
             } catch (error) {
-                // One notification failure must not prevent
-                // reminders for all remaining payments.
                 console.error(
                     `Failed rent reminder for payment ${payment._id}:`,
                     error
@@ -503,7 +598,10 @@ export const runRentalScheduler = async (): Promise<void> => {
             }
         }
     } catch (error) {
-        console.error("Error running rental scheduler:", error);
+        console.error(
+            "Error running rental scheduler:",
+            error
+        );
     } finally {
         schedulerRunning = false;
     }

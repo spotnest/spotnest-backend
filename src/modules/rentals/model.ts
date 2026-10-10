@@ -114,9 +114,11 @@ const rentalAgreementSchema = new Schema<IRentalAgreement>(
                 "DRAFT",
                 "PENDING_TENANT",
                 "PENDING_OWNER",
+                "APPROVED_PENDING_PAYMENT",
                 "ACTIVE",
                 "REJECTED",
                 "TERMINATED",
+                "EXPIRED",
             ],
             default: "PENDING_TENANT",
             index: true,
@@ -125,6 +127,13 @@ const rentalAgreementSchema = new Schema<IRentalAgreement>(
             type: Date,
         },
         ownerAcceptedAt: {
+            type: Date,
+        },
+        paymentDeadline: {
+            type: Date,
+            index: true,
+        },
+        advancePaidAt: {
             type: Date,
         },
     },

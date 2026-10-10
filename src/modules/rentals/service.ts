@@ -205,51 +205,53 @@ const acceptAgreement = async (agreementId: string, tenantId: string) => {
     return agreement.toObject();
 };
 
-const confirmAgreement = async (agreementId: string, ownerId: string) => {
-    const agreement = await RentalAgreement.findOne({ _id: agreementId, owner: ownerId });
+
+const confirmAgreement = async (
+    agreementId: string,
+    ownerId: string
+) => {
+    const agreement = await RentalAgreement.findOne({
+        _id: agreementId,
+        owner: ownerId,
+    });
+
     if (!agreement) {
         throw new AppError(404, "Rental agreement not found");
     }
 
     if (agreement.status !== "PENDING_OWNER") {
-        throw new AppError(409, `Agreement cannot be confirmed in state ${agreement.status}`);
+        throw new AppError(
+            409,
+            `Agreement cannot be confirmed in state ${agreement.status}`
+        );
     }
 
-    agreement.status = "ACTIVE";
-    agreement.ownerAcceptedAt = new Date();
+    if (!agreement.tenantAcceptedAt) {
+        throw new AppError(
+            409,
+            "Tenant must accept the agreement before owner approval"
+        );
+    }
+
+    const now = new Date();
+    const paymentDeadline = new Date(
+        now.getTime() + 72 * 60 * 60 * 1000
+    );
+
+    agreement.ownerAcceptedAt = now;
+    agreement.paymentDeadline = paymentDeadline;
+    agreement.status = "APPROVED_PENDING_PAYMENT";
+
     await agreement.save();
 
-    // Update occupant status to ACTIVE
-    const occupant = await RentalOccupant.findById(agreement.occupant);
-    if (occupant) {
-        occupant.status = "ACTIVE";
-        await occupant.save();
-    }
-
-    // Check if all occupants have active agreements -> activate rental
-    const rental = await Rental.findById(agreement.rental);
-    if (rental) {
-        const allOccupants = await RentalOccupant.find({
-            rental: rental._id,
-            status: { $ne: "TERMINATED" },
-        });
-        const activeOccupants = allOccupants.filter((o) => o.status === "ACTIVE");
-
-        if (allOccupants.length > 0 && activeOccupants.length === allOccupants.length) {
-            rental.status = "active";
-            await rental.save();
-
-            if (rental.booking) {
-                const Booking = (await import("../bookings/model.js")).default;
-                await Booking.updateOne({ _id: rental.booking }, { $set: { status: "ACTIVE" } });
-            }
-        }
-    }
+    // Do not activate the occupant or rental at owner approval.
+    // Verified advance payment must drive activation in the payment service.
 
     await notificationService.createNotification({
         recipient: agreement.tenant.toString(),
-        title: "Rental agreement confirmed!",
-        message: "The property owner has confirmed your agreement. Your tenancy is now ACTIVE.",
+        title: "Rental agreement approved",
+        message:
+            "The owner approved your rental agreement. Complete your advance payment within 72 hours to proceed.",
         type: "rental_approved",
         referenceId: agreement.rental.toString(),
         referenceType: "property",
