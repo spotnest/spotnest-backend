@@ -12,9 +12,14 @@ export const setRentSplitSchema = z.object({
     occupants: z.array(occupantItemSchema).min(1, "At least one occupant is required"),
 });
 
+
 export const acceptAgreementSchema = z.object({
+    acceptedTerms: z.literal(true, {
+        error: "You must accept the rental terms and conditions",
+    }),
     note: z.string().max(500).optional(),
 });
+
 
 export const confirmAgreementSchema = z.object({
     note: z.string().max(500).optional(),

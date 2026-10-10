@@ -1,31 +1,64 @@
 import { z } from "zod";
 
 const addressSchema = z.object({
-    street: z.string().min(1).max(200),
-    city: z.string().min(1).max(100),
-    state: z.string().min(1).max(100),
-    zipCode: z.string().min(1).max(20),
-    country: z.string().min(1).max(100),
+    street: z.string().trim().min(1).max(200),
+    city: z.string().trim().min(1).max(100),
+    state: z.string().trim().min(1).max(100),
+    zipCode: z.string().trim().min(1).max(20),
+    country: z.string().trim().min(1).max(100),
 });
 
-const propertyTypeEnum = z.enum(["apartment", "house", "villa", "studio", "room"]);
+const propertyTypeEnum = z.enum([
+    "apartment",
+    "house",
+    "villa",
+    "studio",
+    "room",
+]);
+
+const rentalTermsSchema = z
+    .string()
+    .trim()
+    .min(20, "Rental terms must contain at least 20 characters")
+    .max(10000, "Rental terms cannot exceed 10000 characters");
 
 export const createPropertySchema = z.object({
-    title: z.string().min(3).max(150),
-    description: z.string().min(10).max(3000),
+    title: z.string().trim().min(3).max(150),
+
+    description: z.string().trim().min(10).max(3000),
+
     propertyType: propertyTypeEnum,
-    price: z.coerce.number().positive("Price must be greater than 0").max(100000000, "Price cannot exceed 100,000,000"),
-    advanceAmount: z.coerce.number().positive("Advance must be greater than 0").max(100000000, "Advance cannot exceed 100,000,000").optional(),
+
+    price: z.coerce
+        .number()
+        .positive("Price must be greater than 0")
+        .max(100000000, "Price cannot exceed 100,000,000"),
+
+    advanceAmount: z.coerce
+        .number()
+        .positive("Advance must be greater than 0")
+        .max(100000000, "Advance cannot exceed 100,000,000")
+        .optional(),
+
+    rentalTerms: rentalTermsSchema,
+
     bedrooms: z.coerce.number().int().min(0),
+
     bathrooms: z.coerce.number().int().min(0),
+
     areaSqFt: z.coerce.number().positive().optional(),
+
     amenities: z.array(z.string()).optional().default([]),
+
     address: addressSchema,
 });
-export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
+
+export type CreatePropertyInput = z.infer<
+    typeof createPropertySchema
+>;
 
 const imageSchema = z.object({
-    url: z.string(),
+    url: z.string().url("Image URL must be valid"),
     publicId: z.string().optional().default(""),
 });
 
@@ -36,31 +69,58 @@ export const updatePropertySchema = createPropertySchema
         address: addressSchema.optional(),
         images: z.array(imageSchema).optional(),
     });
-export type UpdatePropertyInput = z.infer<typeof updatePropertySchema>;
+
+export type UpdatePropertyInput = z.infer<
+    typeof updatePropertySchema
+>;
 
 export const nearbyQuerySchema = z.object({
     page: z.coerce.number().int().min(1).default(1),
+
     limit: z.coerce.number().int().min(1).max(50).default(10),
+
     propertyType: propertyTypeEnum.optional(),
+
     minPrice: z.coerce.number().min(0).optional(),
+
     maxPrice: z.coerce.number().min(0).optional(),
+
     bedrooms: z.coerce.number().int().min(0).optional(),
 });
-export type NearbyQuery = z.infer<typeof nearbyQuerySchema>;
+
+export type NearbyQuery = z.infer<
+    typeof nearbyQuerySchema
+>;
 
 export const listPropertiesQuerySchema = z.object({
     page: z.coerce.number().int().min(1).default(1),
+
     limit: z.coerce.number().int().min(1).max(50).default(10),
+
     city: z.string().optional(),
+
     minPrice: z.coerce.number().min(0).optional(),
+
     maxPrice: z.coerce.number().min(0).optional(),
+
     bedrooms: z.coerce.number().int().min(0).optional(),
+
     propertyType: propertyTypeEnum.optional(),
 });
-export type ListPropertiesQuery = z.infer<typeof listPropertiesQuerySchema>;
 
-export const adminListPropertiesQuerySchema = listPropertiesQuerySchema.extend({
-    status: z.enum(["active", "inactive", "archived"]).optional(),
-    search: z.string().trim().min(1).optional(),
-});
-export type AdminListPropertiesQuery = z.infer<typeof adminListPropertiesQuerySchema>;
+export type ListPropertiesQuery = z.infer<
+    typeof listPropertiesQuerySchema
+>;
+
+export const adminListPropertiesQuerySchema =
+    listPropertiesQuerySchema.extend({
+        status: z
+            .enum(["active", "inactive", "archived"])
+            .optional(),
+
+        search: z.string().trim().min(1).optional(),
+    });
+
+export type AdminListPropertiesQuery = z.infer<
+    typeof adminListPropertiesQuerySchema
+>;

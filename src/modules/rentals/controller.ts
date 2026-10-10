@@ -24,9 +24,12 @@ const getAgreement = async (req: AuthRequest, res: Response) => {
 const acceptAgreement = async (req: AuthRequest, res: Response) => {
     const userId = req.user!.id;
     const agreementId = req.params.agreementId as string;
-    acceptAgreementSchema.parse(req.body);
+
+    // Allow an empty request body while preserving validation.
+    acceptAgreementSchema.parse(req.body ?? {});
 
     const agreement = await service.acceptAgreement(agreementId, userId);
+
     res.json({
         success: true,
         message: "Agreement accepted successfully",
@@ -37,15 +40,23 @@ const acceptAgreement = async (req: AuthRequest, res: Response) => {
 const confirmAgreement = async (req: AuthRequest, res: Response) => {
     const ownerId = req.user!.id;
     const agreementId = req.params.agreementId as string;
-    confirmAgreementSchema.parse(req.body);
 
-    const agreement = await service.confirmAgreement(agreementId, ownerId);
+    // Owner confirmation does not require a request body.
+    // Still validate the body if fields are supplied.
+    confirmAgreementSchema.parse(req.body ?? {});
+
+    const agreement = await service.confirmAgreement(
+        agreementId,
+        ownerId
+    );
+
     res.json({
         success: true,
         message: "Agreement confirmed successfully",
         data: agreement,
     });
 };
+
 
 const getOwnerRentals = async (req: AuthRequest, res: Response) => {
     const ownerId = req.user!.id;

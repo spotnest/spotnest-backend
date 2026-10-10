@@ -212,18 +212,32 @@ const acceptAgreement = async (agreementId: string, tenantId: string) => {
     return agreement.toObject();
 };
 
+<<<<<<< HEAD
 const confirmAgreement = async (agreementId: string, ownerId: string) => {
     const agreement = await RentalAgreement.findOneAndUpdate(
         { _id: agreementId, owner: ownerId, status: "PENDING_OWNER" },
         { $set: { status: "ACTIVE", ownerAcceptedAt: new Date() } },
         { returnDocument: "after" }
     );
+=======
+
+const confirmAgreement = async (
+    agreementId: string,
+    ownerId: string
+) => {
+    const agreement = await RentalAgreement.findOne({
+        _id: agreementId,
+        owner: ownerId,
+    });
+
+>>>>>>> origin/dev
     if (!agreement) {
         const existing = await RentalAgreement.findOne({ _id: agreementId, owner: ownerId });
         if (!existing) throw new AppError(404, "Rental agreement not found");
         throw new AppError(409, `Agreement cannot be confirmed in state ${existing.status}`);
     }
 
+<<<<<<< HEAD
     // Update occupant status to ACTIVE
     const occupant = await RentalOccupant.findById(agreement.occupant);
     if (occupant) {
@@ -250,12 +264,48 @@ const confirmAgreement = async (agreementId: string, ownerId: string) => {
             }
         }
     }
+=======
+    if (agreement.status !== "PENDING_OWNER") {
+        throw new AppError(
+            409,
+            `Agreement cannot be confirmed in state ${agreement.status}`
+        );
+    }
+
+    if (!agreement.tenantAcceptedAt) {
+        throw new AppError(
+            409,
+            "Tenant must accept the agreement before owner approval"
+        );
+    }
+
+    const now = new Date();
+    const paymentDeadline = new Date(
+        now.getTime() + 72 * 60 * 60 * 1000
+    );
+
+    agreement.ownerAcceptedAt = now;
+    agreement.paymentDeadline = paymentDeadline;
+    agreement.status = "APPROVED_PENDING_PAYMENT";
+
+    await agreement.save();
+
+    // Do not activate the occupant or rental at owner approval.
+    // Verified advance payment must drive activation in the payment service.
+>>>>>>> origin/dev
 
     await notificationService.notify({
         recipient: agreement.tenant.toString(),
+<<<<<<< HEAD
         title: "Rental agreement confirmed!",
         message: "The property owner has confirmed your agreement. Your tenancy is now ACTIVE.",
         type: "rental_status",
+=======
+        title: "Rental agreement approved",
+        message:
+            "The owner approved your rental agreement. Complete your advance payment within 72 hours to proceed.",
+        type: "rental_approved",
+>>>>>>> origin/dev
         referenceId: agreement.rental.toString(),
         referenceType: "rental",
         data: {

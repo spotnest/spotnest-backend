@@ -19,9 +19,11 @@ export type AgreementStatus =
     | "DRAFT"
     | "PENDING_TENANT"
     | "PENDING_OWNER"
+    | "APPROVED_PENDING_PAYMENT"
     | "ACTIVE"
     | "REJECTED"
-    | "TERMINATED";
+    | "TERMINATED"
+    | "EXPIRED";
 
 export interface IRentalAgreement extends Document {
     _id: Types.ObjectId;
@@ -38,6 +40,8 @@ export interface IRentalAgreement extends Document {
     status: AgreementStatus;
     tenantAcceptedAt?: Date;
     ownerAcceptedAt?: Date;
+    paymentDeadline?: Date;
+    advancePaidAt?: Date;
     created_at: Date;
     updated_at: Date;
 }

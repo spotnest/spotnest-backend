@@ -7,7 +7,8 @@ import notificationService from "../notifications/service.js";
 import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import type { CreateBookingInput } from "./validation.js";
 import type { ReviewBookingInput } from "./validation.js";
-
+import { Rental } from "../dashboard/tenantDashboard/model.js";
+import { createDefaultOccupantAndAgreement } from "../rentals/service.js";
 const createBooking = async (userId: string, payload: CreateBookingInput) => {
     const property = await Property.findById(payload.propertyId);
     if (!property) {
@@ -115,29 +116,24 @@ const listOwnerRequests = async (ownerId: string) => {
 };
 
 const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBookingInput) => {
-    const approved = input.decision === "APPROVED";
-    const now = new Date();
-    const booking = await bookingRepository.reviewPendingForOwner(bookingId, ownerId, {
-        status: input.decision,
-        paymentStatus: approved ? "ADVANCE_PAYMENT_PENDING" : "NOT_DUE",
-        ...(approved ? { approvedAt: now } : { rejectedAt: now }),
-        ...(input.decisionNote ? { decisionNote: input.decisionNote } : {}),
-    });
+    const booking = await bookingRepository.findForOwner(bookingId, ownerId);
+    if (!booking) throw new AppError(404, "Rental request not found");
+    if (booking.status !== "PENDING") throw new AppError(409, "This rental request has already been reviewed");
 
-    if (!booking) {
-        const existing = await bookingRepository.findForOwner(bookingId, ownerId);
-        if (!existing) throw new AppError(404, "Rental request not found");
-        throw new AppError(409, "This rental request has already been reviewed");
-    }
+    booking.status = input.decision;
+    booking.paymentStatus = input.decision === "APPROVED" ? "ADVANCE_PAYMENT_PENDING" : "NOT_DUE";
+    if (input.decision === "APPROVED") booking.approvedAt = new Date();
+    else booking.rejectedAt = new Date();
+    if (input.decisionNote) booking.decisionNote = input.decisionNote;
+    await booking.save();
 
-    // Emitted only after the decision is persisted.
-    await notificationService.notify({
+    await notificationService.createNotification({
         recipient: booking.userId.toString(),
-        title: approved ? "Rental request approved" : "Rental request rejected",
-        message: approved
+        title: input.decision === "APPROVED" ? "Rental request approved" : "Rental request rejected",
+        message: input.decision === "APPROVED"
             ? "Your rental request was approved. You can now pay the advance."
             : "Your rental request was rejected by the property owner.",
-        type: approved ? "rental_approved" : "rental_rejected",
+        type: input.decision === "APPROVED" ? "rental_approved" : "rental_rejected",
         referenceId: booking._id.toString(),
         referenceType: "booking",
         data: { bookingId: booking._id.toString(), propertyId: booking.propertyId.toString() },
