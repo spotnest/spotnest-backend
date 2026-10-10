@@ -13,6 +13,15 @@ export const notificationTypes = [
     "payment_failed",
     "rent_due",
     "chat_message",
+    "maintenance_created",
+    "maintenance_accepted",
+    "maintenance_rejected",
+    "maintenance_scheduled",
+    "maintenance_rescheduled",
+    "maintenance_started",
+    "maintenance_completed",
+    "maintenance_cancelled",
+    "maintenance_status",
     "system",
 ] as const;
 
@@ -26,6 +35,7 @@ export const notificationReferenceTypes = [
     "booking",
     "rental",
     "payment",
+    "maintenance",
 ] as const;
 
 export type NotificationReferenceType = (typeof notificationReferenceTypes)[number];
@@ -43,6 +53,7 @@ export interface NotificationData {
     rentalId?: string;
     paymentId?: string;
     agreementId?: string;
+    maintenanceId?: string;
 }
 
 export interface INotification extends Document {

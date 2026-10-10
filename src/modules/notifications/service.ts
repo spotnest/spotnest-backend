@@ -67,6 +67,10 @@ const targetUrlFor = (notification: INotification, role?: UserRole): string | un
             return `/${role}/dashboard/chat?conversationId=${conversationId}`;
         }
     }
+    if (type.startsWith("maintenance_") || referenceType === "maintenance") {
+        if (role === UserRole.OWNER) return "/owner/dashboard/maintenance";
+        if (role === UserRole.TENANT) return "/tenant/dashboard/maintenance";
+    }
     // Legacy payment/rent notifications were stored as "system" + booking.
     if (type === "system" && referenceType === "booking") return paymentsPathFor(role);
     return undefined;
