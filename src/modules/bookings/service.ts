@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/AppError.js";
 import Booking from "./model.js";
 import bookingRepository from "./repository.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import type { CreateBookingInput } from "./validation.js";
 import type { ReviewBookingInput } from "./validation.js";
 import { Rental } from "../dashboard/tenantDashboard/model.js";
@@ -84,6 +85,12 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         referenceId: booking._id.toString(),
         referenceType: "booking",
     });
+    emitDashboardUpdate(
+        { userIds: [property.owner, userId], admins: true },
+        "booking",
+        "created",
+        booking._id
+    );
 
     return booking.toObject();
 };
@@ -190,6 +197,12 @@ const reviewBooking = async (
         referenceId: booking._id.toString(),
         referenceType: "booking",
     });
+    emitDashboardUpdate(
+        { userIds: [booking.userId, booking.ownerId], admins: true },
+        "booking",
+        input.decision === "APPROVED" ? "approved" : "rejected",
+        booking._id
+    );
 
     return booking.toObject();
 };

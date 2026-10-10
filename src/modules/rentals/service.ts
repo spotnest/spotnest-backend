@@ -3,6 +3,7 @@ import { AppError } from "../../shared/errors/AppError.js";
 import User from "../auth/model.js";
 import { Rental, Payment } from "../dashboard/tenantDashboard/model.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import { RentalAgreement, RentalOccupant } from "./model.js";
 import repository from "./repository.js";
 import type { SetRentSplitInput } from "./validation.js";
@@ -201,6 +202,7 @@ const acceptAgreement = async (agreementId: string, tenantId: string) => {
         referenceId: agreement.rental.toString(),
         referenceType: "property",
     });
+    emitDashboardUpdate({ userIds: [agreement.owner, agreement.tenant] }, "rental", "agreement_accepted", agreement.rental);
 
     return agreement.toObject();
 };
@@ -256,6 +258,12 @@ const confirmAgreement = async (
         referenceId: agreement.rental.toString(),
         referenceType: "property",
     });
+    emitDashboardUpdate(
+        { userIds: [agreement.owner, agreement.tenant], admins: true },
+        "rental",
+        "agreement_confirmed",
+        agreement.rental
+    );
 
     return agreement.toObject();
 };
@@ -432,6 +440,13 @@ const setRentSplit = async (rentalId: string, ownerId: string, payload: SetRentS
         }
     }
 
+    emitDashboardUpdate(
+        { userIds: [rental.owner, ...resolvedOccupants.map((occupant) => occupant.userId)] },
+        "rental",
+        "split_updated",
+        rental._id
+    );
+
     return {
         rentalId: rental._id.toString(),
         splitMode: rental.splitMode,
@@ -528,6 +543,7 @@ const terminateRental = async (rentalId: string, ownerId: string) => {
     );
 
     const occupants = await RentalOccupant.find({ rental: rental._id });
+    const tenantIds = [...new Set(occupants.map((occ) => occ.tenant.toString()))];
     for (const occ of occupants) {
         await notificationService.createNotification({
             recipient: occ.tenant.toString(),
@@ -538,6 +554,7 @@ const terminateRental = async (rentalId: string, ownerId: string) => {
             referenceType: "property",
         });
     }
+    emitDashboardUpdate({ userIds: [rental.owner, ...tenantIds], admins: true }, "rental", "terminated", rental._id);
 
     return { success: true, message: "Rental terminated successfully" };
 };

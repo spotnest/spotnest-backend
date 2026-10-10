@@ -4,6 +4,7 @@ import Booking from "../bookings/model.js";
 import { Payment, Rental } from "../dashboard/tenantDashboard/model.js";
 import Notification from "../notifications/model.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import { RentalAgreement, RentalOccupant } from "./model.js";
 
 const SCHEDULER_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -439,6 +440,18 @@ const activateEligibleScheduledRentals = async (
                 }
             );
         }
+
+        const fullRental = await Rental.findById(rental._id).select("owner tenant").lean();
+        const tenantIds = occupants.map((o) => String(o.tenant));
+        if (fullRental?.tenant) tenantIds.push(String(fullRental.tenant));
+        if (fullRental?.owner) {
+            emitDashboardUpdate(
+                { userIds: [fullRental.owner, ...tenantIds], admins: true },
+                "rental",
+                "status_changed",
+                rental._id
+            );
+        }
     }
 };
 
@@ -495,6 +508,21 @@ export const runRentalScheduler = async (): Promise<void> => {
                     },
                 }
             );
+
+            for (const rentalId of expiredRentalIds) {
+                const rental = await Rental.findById(rentalId).select("owner tenant").lean();
+                if (rental) {
+                    const occupants = await RentalOccupant.find({ rental: rentalId }).select("tenant").lean();
+                    const tenantIds = [...new Set(occupants.map((o) => String(o.tenant)))];
+                    if (rental.tenant) tenantIds.push(String(rental.tenant));
+                    emitDashboardUpdate(
+                        { userIds: [rental.owner, ...tenantIds], admins: true },
+                        "rental",
+                        "status_changed",
+                        rental._id
+                    );
+                }
+            }
         }
 
         // 3. Never activate scheduled rentals without valid agreements
@@ -541,6 +569,14 @@ export const runRentalScheduler = async (): Promise<void> => {
         }
 
         // 5. Mark unpaid monthly rent past its due date as overdue.
+        const pendingOverduePayments = await Payment.find({
+            type: "MONTHLY_RENT",
+            status: "PENDING",
+            dueDate: { $lt: today },
+        })
+            .select("_id tenant owner")
+            .lean();
+
         await Payment.updateMany(
             {
                 type: "MONTHLY_RENT",
@@ -551,6 +587,15 @@ export const runRentalScheduler = async (): Promise<void> => {
                 $set: { status: "OVERDUE" },
             }
         );
+
+        for (const payment of pendingOverduePayments) {
+            emitDashboardUpdate(
+                { userIds: [payment.tenant, payment.owner], admins: true },
+                "payment",
+                "overdue",
+                payment._id
+            );
+        }
 
         // 6. Send due-date reminders.
         const activePayments = await Payment.find({
