@@ -1,6 +1,7 @@
 
 import { AppError } from "../../../shared/errors/AppError.js";
 import notificationService from "../../notifications/service.js";
+import { emitDashboardUpdate } from "../../../shared/socket/index.js";
 import repository from "./repository.js";
 import type { IMaintenanceRequest, IPayment, IRental } from "./type.js";
 import type { CreateMaintenanceInput } from "./validation.js";
@@ -51,25 +52,24 @@ const getDashboard = async (tenantId: string) => {
 const getMaintenance = async (tenantId: string) => {
     const rental = await getRentalOrNull(tenantId);
     if (!rental) return { rental: null, requests: [] };
+    const maintenanceModuleService = (await import("../../maintenance/service.js")).default;
+    const result = await maintenanceModuleService.getTenantRequests(tenantId, { page: 1, limit: 100 });
     return {
         rental: rentalResponse(rental),
-        requests: (await repository.findMaintenance(tenantId, rental._id.toString()))
-            .map(maintenanceResponse)
+        requests: result.requests,
     };
 };
 
 const createMaintenance = async (tenantId: string, input: CreateMaintenanceInput) => {
-    const rental = await getRental(tenantId);
-    const request = await repository.createMaintenance({ rental: rental._id, property: rental.property._id, tenant: rental.tenant, owner: rental.owner._id, title: input.title, description: input.description, priority: input.priority, ...(input.category ? { category: input.category } : {}) });
-    await notificationService.createNotification({
-        recipient: rental.owner._id.toString(),
-        title: "New maintenance request",
-        message: `${input.title} was reported by your tenant.`,
-        type: "system",
-        referenceId: request._id.toString(),
-        referenceType: "property"
+    const maintenanceModuleService = (await import("../../maintenance/service.js")).default;
+    const cat = (input.category as any) || "Other";
+    const prio = (input.priority as any) || "Normal";
+    return maintenanceModuleService.createRequest(tenantId, {
+        title: input.title,
+        description: input.description,
+        category: cat,
+        priority: prio,
     });
-    return maintenanceResponse(request);
 };
 
 export default {

@@ -24,6 +24,22 @@ const findPendingForOwner = async (ownerId: string) =>
 const findForOwner = async (bookingId: string, ownerId: string) =>
     Booking.findOne({ _id: bookingId, ownerId });
 
+/**
+ * Applies an owner's decision only if the request is still PENDING. The
+ * status check and the write are a single atomic operation, so a retried or
+ * double-clicked review cannot be applied (or notified) twice.
+ */
+const reviewPendingForOwner = async (
+    bookingId: string,
+    ownerId: string,
+    update: Pick<IBooking, "status" | "paymentStatus"> & Partial<Pick<IBooking, "approvedAt" | "rejectedAt" | "decisionNote">>
+) =>
+    Booking.findOneAndUpdate(
+        { _id: bookingId, ownerId, status: "PENDING" },
+        { $set: update },
+        { returnDocument: "after" }
+    );
+
 const updateBooking = async (id: string, payload: Partial<IBooking>) =>
     Booking.findByIdAndUpdate(id, payload, { new: true });
 
@@ -34,5 +50,6 @@ export default {
     findForUser,
     findPendingForOwner,
     findForOwner,
+    reviewPendingForOwner,
     updateBooking,
 };

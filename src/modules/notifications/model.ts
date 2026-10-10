@@ -1,6 +1,6 @@
 import mongoose, { Schema } from "mongoose";
-import { notificationTypes } from "./type.js";
-import type { INotification } from "./type.js";;
+import { notificationReferenceTypes, notificationTypes } from "./type.js";
+import type { INotification } from "./type.js";
 
 const notificationSchema = new Schema<INotification>(
     {
@@ -34,10 +34,14 @@ const notificationSchema = new Schema<INotification>(
         },
         referenceType: {
             type: String,
-            enum: ["user", "property", "conversation", "visit", "booking"],
+            enum: notificationReferenceTypes,
         },
         data: {
             type: Schema.Types.Mixed,
+        },
+        dedupeKey: {
+            type: String,
+            maxlength: 200,
         },
         count: {
             type: Number,
@@ -53,6 +57,13 @@ const notificationSchema = new Schema<INotification>(
 );
 
 notificationSchema.index({ recipient: 1, created_at: -1 });
+
+// Partial so existing rows (and notifications created without a key, such as
+// the per-conversation chat notification) are unaffected.
+notificationSchema.index(
+    { recipient: 1, dedupeKey: 1 },
+    { unique: true, partialFilterExpression: { dedupeKey: { $type: "string" } } },
+);
 
 export default mongoose.model<INotification>(
     "Notification",
