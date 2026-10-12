@@ -5,9 +5,15 @@ export interface DashboardOverview {
     totalOwners: number;
     totalProperties: number;
     activeListings: number;
+    /** Rental requests (bookings) waiting for an owner decision. */
     pendingRequests: number;
     pendingOwnerCount: number;
     pendingUserVerification: number;
+    activeRentals: number;
+    overduePayments: number;
+    /** Sum of all PAID payments (INR). */
+    paymentsReceivedTotal: number;
+    paymentsReceivedCount: number;
 }
 
 export interface DashboardUser {

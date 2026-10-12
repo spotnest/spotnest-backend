@@ -8,6 +8,7 @@ import { UserRole } from "../auth/type.js";
 import type { AdminProperty, IProperty, PropertyAddress, PropertyImage, PublicProperty } from "./type.js";
 import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import subscriptionService from "../subscriptions/service.js";
 import type {
     CreatePropertyInput,
@@ -123,6 +124,7 @@ const createProperty = async (
             images: uploaded,
             status,
         } as Partial<IProperty>);
+        emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "created", property._id);
         return withImages!;
     } catch (err) {
         await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
@@ -238,15 +240,19 @@ const updateStatus = async (
     }
     await propertyRepository.setStatus(id, status);
 
-    if (role === UserRole.ADMIN && property.status !== status) {
-        await notificationService.createNotification({
-            recipient: property.owner.toString(),
-            title: `Property ${status}`,
-            message: `Your property “${property.title}” is now ${status}.`,
-            type: "property_status",
-            referenceId: id,
-            referenceType: "property",
-        });
+    if (property.status !== status) {
+        if (role === UserRole.ADMIN) {
+            await notificationService.notify({
+                recipient: property.owner.toString(),
+                title: `Property ${status}`,
+                message: `Your property “${property.title}” is now ${status}.`,
+                type: "property_status",
+                referenceId: id,
+                referenceType: "property",
+                data: { propertyId: id },
+            });
+        }
+        emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
     }
 
     return { message: `Property marked ${status}` };
@@ -348,6 +354,7 @@ const archiveProperty = async (id: string, userId: string, role: string): Promis
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
     await propertyRepository.setStatus(id, "archived");
+    emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
     return { message: "Property archived" };
 };
 

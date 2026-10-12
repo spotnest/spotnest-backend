@@ -1,6 +1,8 @@
 import User from "../../auth/model.js";
 import { UserRole, UserStatus } from "../../auth/type.js";
 import Property from "../../properties/model.js";
+import Booking from "../../bookings/model.js";
+import { Payment, Rental } from "../tenantDashboard/model.js";
 import type { DashboardProperty, DashboardUser } from "./type.js";
 
 const PROPERTY_STATUS_LABEL = {
@@ -10,15 +12,32 @@ const PROPERTY_STATUS_LABEL = {
 } as const;
 
 const getOverview = async () => {
-    const [totalUsers, totalOwners, pendingUserVerification, pendingOwnerCount, totalProperties, activeListings] = await Promise.all([
+    const [
+        totalUsers,
+        totalOwners,
+        pendingUserVerification,
+        pendingOwnerCount,
+        totalProperties,
+        activeListings,
+        pendingRequests,
+        activeRentals,
+        overduePayments,
+        paymentTotals,
+    ] = await Promise.all([
         User.countDocuments(),
         User.countDocuments({ role: UserRole.OWNER }),
         User.countDocuments({ verificationStatus: "pending" }),
         User.countDocuments({ role: UserRole.OWNER, verificationStatus: { $in: ["pending", "unsubmitted"] } }),
         Property.countDocuments(),
         Property.countDocuments({ status: "active" }),
+        Booking.countDocuments({ status: "PENDING" }),
+        Rental.countDocuments({ status: "active" }),
+        Payment.countDocuments({ type: "MONTHLY_RENT", status: { $in: ["OVERDUE", "overdue"] } }),
+        Payment.aggregate<{ total: number; count: number }>([
+            { $match: { status: { $in: ["PAID", "paid"] } } },
+            { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+        ]),
     ]);
-    const pendingRequests = 0; // TODO: Wire this to a real rental-request count later.
 
     return {
         totalUsers,
@@ -28,6 +47,10 @@ const getOverview = async () => {
         pendingRequests,
         pendingOwnerCount,
         pendingUserVerification,
+        activeRentals,
+        overduePayments,
+        paymentsReceivedTotal: paymentTotals[0]?.total ?? 0,
+        paymentsReceivedCount: paymentTotals[0]?.count ?? 0,
     };
 };
 

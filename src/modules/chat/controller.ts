@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from "express";
 import type { AuthRequest } from "../../types/roleTypes.js";
 import chatService from "./service.js";
+import notificationService from "../notifications/service.js";
 import { getIO } from "../../shared/socket/index.js";
 import {
     conversationParamsSchema,
@@ -62,6 +63,8 @@ const markMessagesRead = async (req: AuthRequest, res: Response, next: NextFunct
     try {
         const { conversationId } = conversationParamsSchema.parse(req.params);
         const data = await chatService.markMessagesRead(conversationId, req.user!.id, req.user!.role);
+        // Keep the notification badge in sync on the user's other tabs/devices.
+        await notificationService.broadcastReadState(req.user!.id, req.user!.role, { conversationId });
         res.status(200).json({ success: true, data });
     } catch (error) { next(error); }
 };

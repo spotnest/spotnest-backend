@@ -6,6 +6,7 @@ import { UserRole } from "../auth/type.js";
 import type { NotificationData } from "./type.js";
 
 
+
 export interface CreateNotificationData {
     recipient: string;
     title: string;
@@ -14,10 +15,32 @@ export interface CreateNotificationData {
     referenceId?: string;
     referenceType?: NotificationReferenceType;
     data?: NotificationData;
+    dedupeKey?: string;
 }
 
+const isDuplicateKeyError = (error: unknown): boolean =>
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: number }).code === 11000;
 
-const create = async (data: CreateNotificationData): Promise<INotification> => Notification.create(data);
+/**
+ * Creates a notification.
+ * Returns null when a notification with the same recipient and dedupeKey
+ * already exists, preventing duplicate notifications on retried events.
+ */
+const create = async (
+    data: CreateNotificationData,
+): Promise<INotification | null> => {
+    try {
+        return await Notification.create(data);
+    } catch (error) {
+        if (data.dedupeKey && isDuplicateKeyError(error)) {
+            return null;
+        }
+
+        throw error;
+    }
+};
 
 const upsertUnreadChatMessage = async (data: {
     recipient: string;
@@ -46,7 +69,7 @@ const upsertUnreadChatMessage = async (data: {
     try {
         await Notification.updateOne(filter, update, { upsert: true, setDefaultsOnInsert: false });
     } catch (error) {
-        if ((error as { code?: number }).code !== 11000) throw error;
+        if (!isDuplicateKeyError(error)) throw error;
         await Notification.updateOne(filter, update);
     }
     const notification = await Notification.findOne(filter);
@@ -82,6 +105,9 @@ const hiddenTypesByRole: Partial<Record<UserRole, NotificationType[]>> = {
     ],
     [UserRole.OWNER]: ["owner_approval_request", "rental_approved", "rental_rejected"],
 };
+
+export const isVisibleToRole = (type: NotificationType, role: UserRole): boolean =>
+    !(hiddenTypesByRole[role] ?? []).includes(type);
 
 const recipientFilter = (recipient: string, role: UserRole) => {
     const hiddenTypes = hiddenTypesByRole[role];
