@@ -86,6 +86,7 @@ const createGatewayOrder = async (input: {
             throw new AppError(409, "Rental agreement not found");
         }
 
+       
         if (agreement.status !== "APPROVED_PENDING_PAYMENT") {
             throw new AppError(
                 409,
@@ -93,17 +94,37 @@ const createGatewayOrder = async (input: {
             );
         }
 
+        // Require proof that both parties accepted the agreement.
+        if (!agreement.tenantAcceptedAt || !agreement.ownerAcceptedAt) {
+            throw new AppError(
+                409,
+                "Both the tenant and owner must accept the rental agreement before advance payment"
+            );
+        }
+
+        // Do not allow payment after the agreement deadline.
         const now = new Date();
 
         if (!agreement.paymentDeadline || now >= agreement.paymentDeadline) {
             agreement.status = "EXPIRED";
             await agreement.save();
 
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+
             throw new AppError(
                 409,
                 "The agreement payment deadline has expired. Contact the property owner."
             );
         }
+
+        // Always use the advance amount stored on the server.
+        payAmount = booking.advanceAmount;
+
+
+
 
         // Use the server-side booking amount, not a client-supplied amount.
         payAmount = booking.advanceAmount;
@@ -288,81 +309,7 @@ const createGatewayOrder = async (input: {
     return { orderId: order.id, amount: Number(order.amount), currency: order.currency, keyId: process.env.RAZORPAY_KEY_ID || "" };
 };
 
-const dueDateForMonth = (leaseStart: Date, billingMonth: string): Date | null => {
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(billingMonth)) return null;
-    const [yearText, monthText] = billingMonth.split("-");
-    const year = Number(yearText);
-    const monthIndex = Number(monthText) - 1;
-    const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-    const day = Math.min(leaseStart.getUTCDate(), lastDay);
-    const dueDate = new Date(Date.UTC(year, monthIndex, day));
-    if (dueDate < leaseStart) return null;
-    return dueDate;
-};
-
-const confirmAdvanceRental = async (bookingId: string) => {
-    const booking = await Booking.findById(bookingId).exec();
-    if (!booking) throw new AppError(404, "Booking not found");
-
-    const now = new Date();
-    const rentalStatus: IRental["status"] = booking.startDate <= now ? "active" : "scheduled";
-    const rental = await Rental.findOneAndUpdate(
-        { booking: booking._id },
-        {
-            $setOnInsert: {
-                booking: booking._id,
-                property: booking.propertyId,
-                owner: booking.ownerId,
-                tenant: booking.userId,
-                monthlyRent: booking.monthlyRent,
-                securityDeposit: booking.advanceAmount,
-                leaseStart: booking.startDate,
-                leaseEnd: booking.endDate,
-                paymentFrequency: "monthly",
-            },
-            $set: { status: rentalStatus },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-
-    booking.status = rentalStatus === "active" ? "ACTIVE" : "CONFIRMED";
-    booking.paymentStatus = "PAID";
-    booking.confirmedAt ??= now;
-    await booking.save();
-
-    const { occupant } = await createDefaultOccupantAndAgreement(
-        rental,
-        booking.userId.toString(),
-        booking.monthlyRent,
-        booking.advanceAmount
-    );
-
-    await Payment.updateOne(
-        { booking: booking._id, type: "ADVANCE" },
-        { $set: { rental: rental?._id, occupant: occupant._id } }
-    );
-
-    await User.updateOne(
-        { _id: booking.userId, role: UserRole.USER },
-        { $set: { role: UserRole.TENANT } }
-    ).exec();
-
-    return booking;
-};
-
 const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
-
-const paymentNotificationData = (payment: IPayment) => ({
-    paymentId: payment._id.toString(),
-    ...(payment.booking ? { bookingId: payment.booking.toString() } : {}),
-    ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
-    ...(payment.property ? { propertyId: payment.property.toString() } : {}),
-});
-
-const paymentDashboardTargets = (payment: IPayment, ownerId?: { toString(): string }) => ({
-    userIds: [payment.tenant, payment.owner ?? ownerId],
-    admins: true,
-});
 
 /**
  * Called exactly once per payment, by whichever path (client verify or
@@ -406,7 +353,6 @@ const notifyPaymentSuccess = async (
     } catch (e) {
         console.warn("[PAYMENT_NOTIFICATION_ERROR]", e);
     }
-    return confirmedBooking;
 };
 
 const notifyLateAdvancePayment = async (
@@ -525,6 +471,10 @@ const confirmAdvanceRental = async (bookingId: string) => {
     }
 
     if (agreement.status === "EXPIRED") {
+        await Booking.updateOne(
+            { _id: booking._id, status: "APPROVED" },
+            { $set: { status: "EXPIRED" } }
+        );
         return { booking, activated: false, expired: true };
     }
 
@@ -540,6 +490,11 @@ const confirmAdvanceRental = async (bookingId: string) => {
         ) {
             agreement.status = "EXPIRED";
             await agreement.save();
+
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
 
             return { booking, activated: false, expired: true };
         }
@@ -660,12 +615,12 @@ const verifyPayment = async (
         payment.referenceId = payment.razorpayPaymentId;
         await payment.save();
 
-        const updatedBooking = payload.type === "ADVANCE"
+        const result = payload.type === "ADVANCE"
             ? await confirmAdvanceRental(booking._id.toString())
-            : booking;
+            : { booking, activated: false, expired: false };
 
         await notifyPaymentSuccess(booking, payment);
-        return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: updatedBooking.status };
+        return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: result.booking.status };
     }
 
     if (payment.razorpayOrderId !== payload.razorpay_order_id) {
@@ -708,12 +663,12 @@ const verifyPayment = async (
     payment.referenceId = payload.razorpay_payment_id;
     await payment.save();
 
-    const updatedBooking = payload.type === "ADVANCE"
+    const result = payload.type === "ADVANCE"
         ? await confirmAdvanceRental(booking._id.toString())
-        : booking;
+        : { booking, activated: false, expired: false };
 
     await notifyPaymentSuccess(booking, payment);
-    return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: updatedBooking.status };
+    return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: result.booking.status };
 };
 
 const handleWebhook = async (event: {
@@ -734,7 +689,7 @@ const handleWebhook = async (event: {
 }) => {
     const paymentEntity = event.payload?.payment?.entity;
 
-    if (!paymentEntity) {
+    if (!paymentEntity || !paymentEntity.id) {
         return;
     }
 
@@ -750,28 +705,28 @@ const handleWebhook = async (event: {
         return;
     }
 
-    if (event.event === "payment.captured" && gatewayPayment.status === "captured") {
-        if (payment.status === "PAID") {
-            if (payment.type === "ADVANCE" && payment.booking) await confirmAdvanceRental(payment.booking.toString());
+    if (event.event === "payment.captured" && paymentEntity.status === "captured") {
+        if (paymentRecord.status === "PAID") {
+            if (paymentRecord.type === "ADVANCE" && paymentRecord.booking) await confirmAdvanceRental(paymentRecord.booking.toString());
             return;
         }
-        if (Number(gatewayPayment.amount) !== Math.round(payment.amount * 100) || gatewayPayment.currency !== "INR") {
+        if (Number(paymentEntity.amount) !== Math.round(paymentRecord.amount * 100) || paymentEntity.currency !== "INR") {
             throw new AppError(400, "Webhook payment amount or currency mismatch");
         }
-        payment.status = "PAID";
-        payment.razorpayPaymentId = gatewayPayment.id;
-        payment.paidAt = new Date();
-        payment.referenceId = gatewayPayment.id;
-        await payment.save();
-        if (payment.type === "ADVANCE" && payment.booking) {
-            await confirmAdvanceRental(payment.booking.toString());
+        paymentRecord.status = "PAID";
+        paymentRecord.razorpayPaymentId = paymentEntity.id;
+        paymentRecord.paidAt = new Date();
+        paymentRecord.referenceId = paymentEntity.id;
+        await paymentRecord.save();
+        if (paymentRecord.type === "ADVANCE" && paymentRecord.booking) {
+            await confirmAdvanceRental(paymentRecord.booking.toString());
         }
-        const b = payment.booking ? await Booking.findById(payment.booking).exec() : null;
-        if (b) await notifyPaymentSuccess(b, payment);
+        const b = paymentRecord.booking ? await Booking.findById(paymentRecord.booking).exec() : null;
+        if (b) await notifyPaymentSuccess(b, paymentRecord);
     } else if (event.event === "payment.failed") {
-        payment.status = "FAILED";
-        payment.referenceId = gatewayPayment.id;
-        await payment.save();
+        paymentRecord.status = "FAILED";
+        paymentRecord.referenceId = paymentEntity.id;
+        await paymentRecord.save();
     }
 };
 
@@ -873,6 +828,8 @@ export default {
         });
     },
 
+    createGatewayOrder,
+    confirmAdvanceRental,
     verifyPayment,
     handleWebhook,
     ensureMonthlyRentPayments,

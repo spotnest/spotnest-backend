@@ -36,6 +36,11 @@ const userSchema = new Schema<IUser>(
             enum: ["unsubmitted", "pending", "approved", "rejected"],
             default: "unsubmitted",
         },
+        rentalTerms: {
+        type: String,
+        trim: true,
+        maxlength: 10000,
+        },
         idDocumentPublicId: { type: String, select: false }, // only field here that's genuinely sensitive
         idDocumentResourceType: {
             type: String,

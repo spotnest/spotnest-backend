@@ -29,6 +29,17 @@ export const terminateRentalSchema = z.object({
     reason: z.string().max(500).optional(),
 });
 
+
+export const updateOwnerRentalTermsSchema = z.object({
+    terms: z
+        .string()
+        .trim()
+        .min(20, "Rental terms must contain at least 20 characters")
+        .max(10000, "Rental terms cannot exceed 10000 characters"),
+});
+
+export type UpdateOwnerRentalTermsInput = z.infer<typeof updateOwnerRentalTermsSchema>;
+
 export type SetRentSplitInput = z.infer<typeof setRentSplitSchema>;
 export type AcceptAgreementInput = z.infer<typeof acceptAgreementSchema>;
 export type ConfirmAgreementInput = z.infer<typeof confirmAgreementSchema>;

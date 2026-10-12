@@ -60,6 +60,15 @@ export type UpdateLocationInput = z.infer<typeof updateLocationSchema>;
 export const rejectVerificationSchema = z.object({
     reason: z.string().min(1, "Rejection reason is required").max(500),
 });
+export const updateOwnerRentalTermsSchema = z.object({
+    terms: z
+        .string()
+        .trim()
+        .min(20, "Rental terms must contain at least 20 characters")
+        .max(10000, "Rental terms cannot exceed 10000 characters"),
+});
+
+export type UpdateOwnerRentalTermsInput = z.infer< typeof updateOwnerRentalTermsSchema>;
 export type RejectVerificationInput = z.infer<typeof rejectVerificationSchema>
 
 export type SignupInput = z.infer<typeof signupSchema>;

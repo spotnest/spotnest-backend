@@ -1,6 +1,13 @@
 import type { Document, Types } from "mongoose";
 
-export type BookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CONFIRMED" | "ACTIVE" | "COMPLETED";
+export type BookingStatus =
+    | "PENDING"
+    | "APPROVED"
+    | "REJECTED"
+    | "CONFIRMED"
+    | "ACTIVE"
+    | "COMPLETED"
+    | "EXPIRED";
 export type BookingPaymentStatus = "NOT_DUE" | "ADVANCE_PAYMENT_PENDING" | "PAID";
 
 export interface IBooking extends Document {

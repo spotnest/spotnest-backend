@@ -51,6 +51,7 @@ export interface IUser extends Document {
     locationName?: string;         // exactly what the user typed
     locationResolvedName?: string; // what the geocoder matched, so they can spot a bad match
     locationUpdatedAt?: Date;
+    rentalTerms?: string;
 }
 
 // JWT token data

@@ -54,6 +54,7 @@ export interface NotificationData {
     paymentId?: string;
     agreementId?: string;
     maintenanceId?: string;
+    paymentDeadline?: string;
 }
 
 export interface INotification extends Document {

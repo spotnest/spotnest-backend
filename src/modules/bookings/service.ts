@@ -8,6 +8,7 @@ import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import type { CreateBookingInput } from "./validation.js";
 import type { ReviewBookingInput } from "./validation.js";
 import { Rental } from "../dashboard/tenantDashboard/model.js";
+import { RentalAgreement } from "../rentals/model.js";
 import { createDefaultOccupantAndAgreement } from "../rentals/service.js";
 const createBooking = async (userId: string, payload: CreateBookingInput) => {
     const property = await Property.findById(payload.propertyId);
@@ -58,9 +59,48 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
     }).lean();
     if (myExistingRequest) {
         if (myExistingRequest.status === "APPROVED") {
-            throw new AppError(409, "Your rental request is already approved. Please proceed to pay advance.");
+            const existingRental = await Rental.findOne({
+                booking: myExistingRequest._id,
+            }).lean();
+
+            const existingAgreement = existingRental
+                ? await RentalAgreement.findOne({
+                      rental: existingRental._id,
+                      tenant: myExistingRequest.userId,
+                  }).lean()
+                : null;
+
+            const now = new Date();
+            const isAgreementExpired =
+                existingAgreement &&
+                (existingAgreement.status === "EXPIRED" ||
+                    (existingAgreement.paymentDeadline &&
+                        now >= existingAgreement.paymentDeadline));
+
+            if (isAgreementExpired) {
+                // Mark previous booking and agreement expired so tenant can submit new request
+                await Booking.updateOne(
+                    { _id: myExistingRequest._id },
+                    { $set: { status: "EXPIRED" } }
+                );
+                if (existingAgreement && existingAgreement.status !== "EXPIRED") {
+                    await RentalAgreement.updateOne(
+                        { _id: existingAgreement._id },
+                        { $set: { status: "EXPIRED" } }
+                    );
+                }
+            } else {
+                throw new AppError(
+                    409,
+                    "Your rental request is already approved. Please proceed to pay advance."
+                );
+            }
+        } else {
+            throw new AppError(
+                409,
+                "You already have a pending rental request for this property."
+            );
         }
-        throw new AppError(409, "You already have a pending rental request for this property.");
     }
 
     const booking = await bookingRepository.createBooking({
@@ -142,7 +182,7 @@ const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBo
     emitDashboardUpdate(
         { userIds: [booking.userId, booking.ownerId], admins: true },
         "booking",
-        approved ? "approved" : "rejected",
+        input.decision === "APPROVED" ? "approved" : "rejected",
         booking._id
     );
 

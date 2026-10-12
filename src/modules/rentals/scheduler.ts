@@ -4,13 +4,9 @@ import Booking from "../bookings/model.js";
 import { Payment, Rental } from "../dashboard/tenantDashboard/model.js";
 import Notification from "../notifications/model.js";
 import notificationService from "../notifications/service.js";
-<<<<<<< HEAD
 import { emitDashboardUpdate } from "../../shared/socket/index.js";
-import { RentalOccupant } from "./model.js";
-import type { IRental } from "../dashboard/tenantDashboard/type.js";
-=======
 import { RentalAgreement, RentalOccupant } from "./model.js";
->>>>>>> origin/dev
+import type { IRental } from "../dashboard/tenantDashboard/type.js";
 
 const SCHEDULER_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -23,7 +19,9 @@ interface ReminderDetails {
     message: string;
 }
 
+const AGREEMENT_EXPIRY_INTERVAL_MS = 10 * 1000;
 let schedulerInterval: NodeJS.Timeout | null = null;
+let expiryCheckInterval: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
 
 const startOfUtcDay = (date: Date): Date =>
@@ -71,7 +69,6 @@ const dueDateForMonth = (
     return new Date(Date.UTC(year, monthIndex, day));
 };
 
-<<<<<<< HEAD
 const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
 
 const rentalTenantIds = async (rental: IRental): Promise<string[]> => {
@@ -132,91 +129,6 @@ const notifyRentalLifecycle = async (
 // ============================================================
 // RENTAL SCHEDULER
 // ============================================================
-=======
-const getReminderDetails = (
-    amount: number,
-    billingMonth: string,
-    diffDays: number,
-    paymentStatus: string
-): ReminderDetails | null => {
-    const formattedAmount = amount.toLocaleString("en-IN");
-
-    if (diffDays === 7) {
-        return {
-            stage: "7_DAYS",
-            title: "Rent Reminder: Due in 7 days",
-            message:
-                `Your monthly rent of ₹${formattedAmount} ` +
-                `for ${billingMonth} is due in 7 days.`,
-        };
-    }
-
-    if (diffDays === 3) {
-        return {
-            stage: "3_DAYS",
-            title: "Rent Reminder: Due in 3 days",
-            message:
-                `Your monthly rent of ₹${formattedAmount} ` +
-                `for ${billingMonth} is due in 3 days.`,
-        };
-    }
-
-    if (diffDays === 0) {
-        return {
-            stage: "DUE_TODAY",
-            title: "Rent Reminder: Due Today",
-            message:
-                `Your monthly rent of ₹${formattedAmount} ` +
-                `for ${billingMonth} is due today.`,
-        };
-    }
-
-    if (diffDays < 0 && paymentStatus === "OVERDUE") {
-        return {
-            stage: "OVERDUE",
-            title: "Rent Overdue Alert",
-            message:
-                `Your monthly rent of ₹${formattedAmount} ` +
-                `for ${billingMonth} is overdue. ` +
-                "Please make your payment promptly.",
-        };
-    }
-
-    return null;
-};
-
-const sendReminderOnce = async (
-    payment: {
-        _id: unknown;
-        tenant: unknown;
-        amount: number;
-        billingMonth?: string;
-    },
-    details: ReminderDetails
-): Promise<void> => {
-    const recipientId = String(payment.tenant);
-    const paymentId = String(payment._id);
-
-    const alreadySent = await Notification.exists({
-        recipient: recipientId,
-        referenceId: paymentId,
-        title: details.title,
-    });
-
-    if (alreadySent) {
-        return;
-    }
-
-    await notificationService.createNotification({
-        recipient: recipientId,
-        title: details.title,
-        message: details.message,
-        type: "system",
-        referenceId: paymentId,
-        // Keep compatible with the current notification schema.
-        referenceType: "booking",
-    });
-};
 
 /**
  * Backward compatibility for older active rentals.
@@ -242,7 +154,6 @@ const ensureLegacyOccupant = async (rental: {
     if (existingOccupant) {
         return;
     }
->>>>>>> origin/dev
 
     try {
         await RentalOccupant.create({
@@ -259,13 +170,6 @@ const ensureLegacyOccupant = async (rental: {
         }
     }
 };
-
-<<<<<<< HEAD
-        for (const rental of dueScheduledRentals) {
-            rental.status = "active";
-            await rental.save();
-            await notifyRentalLifecycle(rental, "started", await rentalTenantIds(rental));
-=======
 /**
  * Generates monthly rent payments for active occupants.
  *
@@ -390,7 +294,6 @@ const generateMonthlyPayments = async (
                     }
                 }
             }
->>>>>>> origin/dev
         }
 
         cursor.setUTCMonth(cursor.getUTCMonth() + 1);
@@ -401,18 +304,43 @@ const generateMonthlyPayments = async (
  * Expires agreements when their exact payment deadline passes.
  * An expired agreement must never be activated by the scheduler.
  */
-const expireUnpaidAgreements = async (
-    now: Date
-): Promise<void> => {
-    await RentalAgreement.updateMany(
+export const expireUnpaidAgreements = async (
+    now: Date = new Date()
+): Promise<number> => {
+    const overdueAgreements = await RentalAgreement.find({
+        status: "APPROVED_PENDING_PAYMENT",
+        paymentDeadline: { $lte: now },
+    })
+        .select("_id rental")
+        .lean();
+
+    if (overdueAgreements.length === 0) {
+        return 0;
+    }
+
+    const overdueIds = overdueAgreements.map((a) => a._id);
+
+    const updateRes = await RentalAgreement.updateMany(
         {
+            _id: { $in: overdueIds },
             status: "APPROVED_PENDING_PAYMENT",
-            paymentDeadline: { $lte: now },
         },
         {
             $set: { status: "EXPIRED" },
         }
     );
+
+    for (const ag of overdueAgreements) {
+        const rental = await Rental.findById(ag.rental).select("booking").lean();
+        if (rental?.booking) {
+            await Booking.updateOne(
+                { _id: rental.booking, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+        }
+    }
+
+    return updateRes.modifiedCount;
 };
 
 /**
@@ -533,16 +461,14 @@ export const runRentalScheduler = async (): Promise<void> => {
             today.getTime() + DAY_MS
         );
 
-        // 1. Expire agreements whose 72-hour deadline has passed.
+        // 1. Expire agreements whose payment deadline has passed.
         await expireUnpaidAgreements(now);
 
         // 2. End rentals whose lease-end calendar day has passed.
         const expiredRentals = await Rental.find({
             status: { $in: ["scheduled", "active"] },
             leaseEnd: { $lt: today },
-        })
-            .select("_id")
-            .lean();
+        });
 
         if (expiredRentals.length > 0) {
             const expiredRentalIds = expiredRentals.map(
@@ -572,7 +498,9 @@ export const runRentalScheduler = async (): Promise<void> => {
                 }
             );
 
-            await notifyRentalLifecycle(rental, "ended", await rentalTenantIds(rental));
+            for (const rental of expiredRentals) {
+                await notifyRentalLifecycle(rental, "ended", await rentalTenantIds(rental));
+            }
         }
 
         // 3. Never activate scheduled rentals without valid agreements
@@ -619,16 +547,13 @@ export const runRentalScheduler = async (): Promise<void> => {
         }
 
         // 5. Mark unpaid monthly rent past its due date as overdue.
-        await Payment.updateMany(
-            {
-                type: "MONTHLY_RENT",
-                status: "PENDING",
-                dueDate: { $lt: today },
-            },
-<<<<<<< HEAD
+        const overduePayments = await Payment.find({
+            type: "MONTHLY_RENT",
+            status: "PENDING",
+            dueDate: { $lt: today },
         });
 
-        for (const payment of pendingPayments) {
+        for (const payment of overduePayments) {
             // Conditional update: only the pass that actually moves the
             // payment to OVERDUE notifies the owner and refreshes dashboards.
             const transition = await Payment.updateOne(
@@ -660,16 +585,6 @@ export const runRentalScheduler = async (): Promise<void> => {
             );
         }
 
-        // ====================================================
-        // 6. SEND RENT REMINDERS
-        // ====================================================
-=======
-            {
-                $set: { status: "OVERDUE" },
-            }
-        );
->>>>>>> origin/dev
-
         // 6. Send due-date reminders.
         const activePayments = await Payment.find({
             type: "MONTHLY_RENT",
@@ -677,7 +592,7 @@ export const runRentalScheduler = async (): Promise<void> => {
             dueDate: { $exists: true, $ne: null },
         })
             .select(
-                "_id tenant amount billingMonth dueDate status"
+                "_id tenant amount billingMonth dueDate status rental booking"
             )
             .lean();
 
@@ -695,7 +610,6 @@ export const runRentalScheduler = async (): Promise<void> => {
                     DAY_MS
             );
 
-<<<<<<< HEAD
             let notificationTitle = "";
             let notificationMessage = "";
             // Reminders run on every 6-hour pass; the key limits each
@@ -777,27 +691,6 @@ export const runRentalScheduler = async (): Promise<void> => {
                 },
                 dedupeKey,
             });
-=======
-            const details = getReminderDetails(
-                payment.amount,
-                payment.billingMonth,
-                diffDays,
-                payment.status
-            );
-
-            if (!details) {
-                continue;
-            }
-
-            try {
-                await sendReminderOnce(payment, details);
-            } catch (error) {
-                console.error(
-                    `Failed rent reminder for payment ${payment._id}:`,
-                    error
-                );
-            }
->>>>>>> origin/dev
         }
     } catch (error) {
         console.error(
@@ -810,22 +703,28 @@ export const runRentalScheduler = async (): Promise<void> => {
 };
 
 export const startRentalScheduler = (): void => {
-    if (schedulerInterval) {
-        return;
+    if (!schedulerInterval) {
+        void runRentalScheduler();
+        schedulerInterval = setInterval(() => {
+            void runRentalScheduler();
+        }, SCHEDULER_INTERVAL_MS);
     }
 
-    void runRentalScheduler();
-
-    schedulerInterval = setInterval(() => {
-        void runRentalScheduler();
-    }, SCHEDULER_INTERVAL_MS);
+    if (!expiryCheckInterval) {
+        expiryCheckInterval = setInterval(() => {
+            void expireUnpaidAgreements();
+        }, AGREEMENT_EXPIRY_INTERVAL_MS);
+    }
 };
 
 export const stopRentalScheduler = (): void => {
-    if (!schedulerInterval) {
-        return;
+    if (schedulerInterval) {
+        clearInterval(schedulerInterval);
+        schedulerInterval = null;
     }
 
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
+    if (expiryCheckInterval) {
+        clearInterval(expiryCheckInterval);
+        expiryCheckInterval = null;
+    }
 };

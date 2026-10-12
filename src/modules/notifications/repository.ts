@@ -5,6 +5,8 @@ import Notification from "./model.js";
 import { UserRole } from "../auth/type.js";
 import type { NotificationData } from "./type.js";
 
+
+
 export interface CreateNotificationData {
     recipient: string;
     title: string;
@@ -17,17 +19,25 @@ export interface CreateNotificationData {
 }
 
 const isDuplicateKeyError = (error: unknown): boolean =>
-    typeof error === "object" && error !== null && (error as { code?: number }).code === 11000;
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: number }).code === 11000;
 
 /**
- * Persists a notification. Returns `null` when a notification with the same
- * recipient + dedupeKey already exists, i.e. the triggering event was retried.
+ * Creates a notification.
+ * Returns null when a notification with the same recipient and dedupeKey
+ * already exists, preventing duplicate notifications on retried events.
  */
-const create = async (data: CreateNotificationData): Promise<INotification | null> => {
+const create = async (
+    data: CreateNotificationData,
+): Promise<INotification | null> => {
     try {
         return await Notification.create(data);
     } catch (error) {
-        if (data.dedupeKey && isDuplicateKeyError(error)) return null;
+        if (data.dedupeKey && isDuplicateKeyError(error)) {
+            return null;
+        }
+
         throw error;
     }
 };
