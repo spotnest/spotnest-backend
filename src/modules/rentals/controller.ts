@@ -6,11 +6,13 @@ import {
     confirmAgreementSchema,
     setRentSplitSchema,
     terminateRentalSchema,
+    updateOwnerRentalTermsSchema,
 } from "./validation.js";
 
 const getMyRental = async (req: AuthRequest, res: Response) => {
     const userId = req.user!.id;
-    const rentalData = await service.getTenantRental(userId);
+    const bookingId = req.query.bookingId as string | undefined;
+    const rentalData = await service.getTenantRental(userId, bookingId);
     res.json({ success: true, data: rentalData });
 };
 
@@ -89,6 +91,35 @@ const terminateRental = async (req: AuthRequest, res: Response) => {
     });
 };
 
+const getOwnerRentalTerms = async (
+    req: AuthRequest,
+    res: Response
+) => {
+    const result = await service.getOwnerRentalTerms(req.user!.id);
+
+    res.json({
+        success: true,
+        data: result,
+    });
+};
+
+const updateOwnerRentalTerms = async (
+    req: AuthRequest,
+    res: Response
+) => {
+    const payload = updateOwnerRentalTermsSchema.parse(req.body);
+
+    const result = await service.updateOwnerRentalTerms(
+        req.user!.id,
+        payload.terms
+    );
+
+    res.json({
+        success: true,
+        message: "Rental terms saved successfully",
+        data: result,
+    });
+};
 export default {
     getMyRental,
     getAgreement,
@@ -97,4 +128,6 @@ export default {
     getOwnerRentals,
     setRentSplit,
     terminateRental,
+    getOwnerRentalTerms,
+    updateOwnerRentalTerms,
 };

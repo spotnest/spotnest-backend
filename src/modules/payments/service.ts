@@ -86,6 +86,7 @@ const createGatewayOrder = async (input: {
             throw new AppError(409, "Rental agreement not found");
         }
 
+       
         if (agreement.status !== "APPROVED_PENDING_PAYMENT") {
             throw new AppError(
                 409,
@@ -93,17 +94,37 @@ const createGatewayOrder = async (input: {
             );
         }
 
+        // Require proof that both parties accepted the agreement.
+        if (!agreement.tenantAcceptedAt || !agreement.ownerAcceptedAt) {
+            throw new AppError(
+                409,
+                "Both the tenant and owner must accept the rental agreement before advance payment"
+            );
+        }
+
+        // Do not allow payment after the agreement deadline.
         const now = new Date();
 
         if (!agreement.paymentDeadline || now >= agreement.paymentDeadline) {
             agreement.status = "EXPIRED";
             await agreement.save();
 
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+
             throw new AppError(
                 409,
                 "The agreement payment deadline has expired. Contact the property owner."
             );
         }
+
+        // Always use the advance amount stored on the server.
+        payAmount = booking.advanceAmount;
+
+
+
 
         // Use the server-side booking amount, not a client-supplied amount.
         payAmount = booking.advanceAmount;
@@ -467,6 +488,10 @@ const confirmAdvanceRental = async (bookingId: string) => {    const booking = a
     }
 
     if (agreement.status === "EXPIRED") {
+        await Booking.updateOne(
+            { _id: booking._id, status: "APPROVED" },
+            { $set: { status: "EXPIRED" } }
+        );
         return { booking, activated: false, expired: true };
     }
 
@@ -482,6 +507,11 @@ const confirmAdvanceRental = async (bookingId: string) => {    const booking = a
         ) {
             agreement.status = "EXPIRED";
             await agreement.save();
+
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
 
             return { booking, activated: false, expired: true };
         }
@@ -892,6 +922,8 @@ export default {
         });
     },
 
+    createGatewayOrder,
+    confirmAdvanceRental,
     verifyPayment,
     handleWebhook,
     ensureMonthlyRentPayments,

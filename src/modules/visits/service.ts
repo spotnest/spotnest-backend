@@ -138,6 +138,7 @@ const updateConflict = (): AppError =>
 // NOTIFICATIONS
 // -----------------------------------------------------
 
+
 const notifyRequester = async (
     visit: IVisit,
     title: string,
@@ -150,8 +151,12 @@ const notifyRequester = async (
         type: "system",
         referenceId: visit._id.toString(),
         referenceType: "visit",
+        data: {
+            propertyId: visit.property.toString(),
+        },
     });
 };
+
 
 const notifyOwner = async (
     visit: IVisit,
@@ -165,6 +170,9 @@ const notifyOwner = async (
         type: "system",
         referenceId: visit._id.toString(),
         referenceType: "visit",
+        data: {
+            propertyId: visit.property.toString(),
+        },
     });
 };
 
@@ -574,4 +582,5 @@ export default {
     rescheduleVisit,
     cancelVisit,
     completeVisit,
+    notifyRequester,
 };

@@ -11,6 +11,7 @@ import type {
 } from "./type.js";
 import type { ListNotificationsQuery } from "./validation.js";
 
+
 interface CreateNotificationInput {
     recipient: string;
     title: string;
@@ -18,28 +19,81 @@ interface CreateNotificationInput {
     type: NotificationType;
     referenceId?: string;
     referenceType?: NotificationReferenceType;
+    data?: NotificationData;
 }
 
-const targetUrlFor = (notification: INotification, role?: UserRole): string | undefined => {
-    if (notification.type === "rental_request") return "/bookings?tab=requests";
-    if ((notification.type === "rental_approved" || notification.type === "rental_rejected") && notification.referenceId) {
+
+
+
+const targetUrlFor = (
+    notification: INotification,
+    role?: UserRole
+): string | undefined => {
+    // Owner: open the visit-request management page.
+    if (
+        notification.referenceType === "visit" &&
+        notification.referenceId
+    ) {
+        if (role === UserRole.OWNER) {
+            return `/owner/requests?visitId=${notification.referenceId.toString()}`;
+        }
+
+        // Requester: open the exact property.
+        if (notification.data?.propertyId) {
+            return `/properties/${notification.data.propertyId}`;
+        }
+    }
+
+    if (notification.type === "rental_request") {
+        return "/bookings?tab=requests";
+    }
+
+    if (
+        (notification.type === "rental_approved" ||
+            notification.type === "rental_rejected") &&
+        notification.referenceId
+    ) {
         return `/bookings?bookingId=${notification.referenceId.toString()}`;
     }
-    if (notification.type === "owner_approval_request") return "/requests/owner-approvals";
-    if (notification.type === "owner_approved" || notification.type === "owner_rejected") return "/owner/dashboard";
-    if (notification.type === "property_status" && notification.referenceId) {
+
+    if (notification.type === "owner_approval_request") {
+        return "/requests/owner-approvals";
+    }
+
+    if (
+        notification.type === "owner_approved" ||
+        notification.type === "owner_rejected"
+    ) {
+        return "/owner/dashboard";
+    }
+
+    if (
+        notification.type === "property_status" &&
+        notification.referenceId
+    ) {
         return `/properties/${notification.referenceId.toString()}`;
     }
+
     if (notification.type === "chat_message") {
-        const conversationId = notification.data?.conversationId ?? notification.referenceId?.toString();
+        const conversationId =
+            notification.data?.conversationId ??
+            notification.referenceId?.toString();
+
         if (!conversationId) return undefined;
-        if (role === UserRole.USER) return `/messages?conversationId=${conversationId}`;
+
+        if (role === UserRole.USER) {
+            return `/messages?conversationId=${conversationId}`;
+        }
+
         if (role === UserRole.TENANT || role === UserRole.OWNER) {
             return `/${role}/dashboard/chat?conversationId=${conversationId}`;
         }
     }
+
     return undefined;
 };
+
+
 
 const toResponse = (notification: INotification, role?: UserRole): NotificationResponse => {
     const targetUrl = targetUrlFor(notification, role);

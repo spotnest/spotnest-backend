@@ -5,6 +5,7 @@ import Notification from "./model.js";
 import { UserRole } from "../auth/type.js";
 import type { NotificationData } from "./type.js";
 
+
 export interface CreateNotificationData {
     recipient: string;
     title: string;
@@ -12,7 +13,9 @@ export interface CreateNotificationData {
     type: NotificationType;
     referenceId?: string;
     referenceType?: NotificationReferenceType;
+    data?: NotificationData;
 }
+
 
 const create = async (data: CreateNotificationData): Promise<INotification> => Notification.create(data);
 

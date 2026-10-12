@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import { AppError } from "../../shared/errors/AppError.js";
+import { RENTAL_PAYMENT_DEADLINE_MS } from "../../shared/config/constants.js";
 import User from "../auth/model.js";
+import Booking from "../bookings/model.js";
 import { Rental, Payment } from "../dashboard/tenantDashboard/model.js";
 import notificationService from "../notifications/service.js";
 import { RentalAgreement, RentalOccupant } from "./model.js";
@@ -15,13 +17,48 @@ const DEFAULT_TERMS = `
 5. Either party may terminate this agreement with 30 days written notice prior to lease expiration.
 `.trim();
 
+export const getOwnerRentalTerms = async (ownerId: string) => {
+    const owner = await User.findById(ownerId).select("rentalTerms");
+
+    if (!owner || owner.role !== "owner") {
+        throw new AppError(404, "Owner account not found");
+    }
+
+    const savedTerms = owner.rentalTerms?.trim();
+
+    return {
+        terms: savedTerms || DEFAULT_TERMS,
+        isCustom: Boolean(savedTerms),
+    };
+};
+
+export const updateOwnerRentalTerms = async (
+    ownerId: string,
+    terms: string
+) => {
+    const owner = await User.findById(ownerId);
+
+    if (!owner || owner.role !== "owner") {
+        throw new AppError(404, "Owner account not found");
+    }
+
+    owner.rentalTerms = terms.trim();
+    await owner.save();
+
+    return {
+        terms: owner.rentalTerms,
+        isCustom: true,
+    };
+};
+
+
 export const createDefaultOccupantAndAgreement = async (
     rental: any,
     tenantId: string,
     rentAmount: number,
     securityDepositShare: number
 ) => {
-    // 1. Create or update primary occupant
+    // 1. Create or update the primary occupant
     let occupant = await RentalOccupant.findOne({
         rental: rental._id,
         tenant: tenantId,
@@ -43,13 +80,29 @@ export const createDefaultOccupantAndAgreement = async (
         await occupant.save();
     }
 
-    // 2. Create or update agreement
+    // 2. Load the owner's saved rental terms.
+    // Fall back to the default terms for existing owners who have not
+    // customized their terms yet.
+    const owner = await User.findById(rental.owner).select(
+        "rentalTerms role"
+    );
+
+    if (!owner || owner.role !== "owner") {
+        throw new AppError(404, "Rental owner not found");
+    }
+
+    const agreementTerms =
+        owner?.rentalTerms?.trim() || DEFAULT_TERMS;
+
+    // 3. Find an existing agreement.
+    // Never overwrite the terms of an agreement that already exists.
     let agreement = await RentalAgreement.findOne({
         rental: rental._id,
         tenant: tenantId,
         status: { $nin: ["REJECTED", "TERMINATED"] },
     });
 
+    // 4. Create a new agreement using a snapshot of the owner's terms.
     if (!agreement) {
         agreement = await RentalAgreement.create({
             rental: rental._id,
@@ -61,7 +114,7 @@ export const createDefaultOccupantAndAgreement = async (
             securityDepositShare,
             leaseStart: rental.leaseStart,
             leaseEnd: rental.leaseEnd,
-            terms: DEFAULT_TERMS,
+            terms: agreementTerms,
             status: "PENDING_TENANT",
         });
     }
@@ -69,20 +122,47 @@ export const createDefaultOccupantAndAgreement = async (
     return { occupant, agreement };
 };
 
-const getTenantRental = async (tenantId: string) => {
-    const occupant = await RentalOccupant.findOne({
-        tenant: tenantId,
-        status: { $in: ["PENDING", "ACTIVE"] },
-    })
-        .populate("rental")
-        .sort({ created_at: -1 });
 
-    if (!occupant || !occupant.rental) {
-        return null;
+
+const getTenantRental = async (tenantId: string, bookingId?: string) => {
+    let rental: any = null;
+    let occupant: any = null;
+
+    if (bookingId) {
+        rental = await Rental.findOne({ booking: bookingId })
+            .populate("property")
+            .populate("owner", "name email phone")
+            .populate("tenant", "name email phone");
+
+        if (rental) {
+            occupant = await RentalOccupant.findOne({
+                rental: rental._id,
+                tenant: tenantId,
+                status: { $nin: ["TERMINATED"] },
+            });
+        }
     }
 
-    const rental = await repository.findRentalById(occupant.rental._id.toString());
-    if (!rental) return null;
+    if (!rental || !occupant) {
+        occupant = await RentalOccupant.findOne({
+            tenant: tenantId,
+            status: { $in: ["PENDING", "ACTIVE"] },
+        })
+            .populate("rental")
+            .sort({ created_at: -1 });
+
+        if (!occupant || !occupant.rental) {
+            return null;
+        }
+
+        rental = await repository.findRentalById(
+            occupant.rental._id.toString()
+        );
+    }
+
+    if (!rental) {
+        return null;
+    }
 
     const agreement = await RentalAgreement.findOne({
         rental: rental._id,
@@ -90,10 +170,32 @@ const getTenantRental = async (tenantId: string) => {
         status: { $ne: "TERMINATED" },
     }).sort({ created_at: -1 });
 
-    const occupants = await repository.findOccupantsByRental(rental._id.toString());
+    // Authoritative expiration check: transition to EXPIRED if deadline passed
+    const now = new Date();
+    if (
+        agreement &&
+        agreement.status === "APPROVED_PENDING_PAYMENT" &&
+        agreement.paymentDeadline &&
+        now >= agreement.paymentDeadline
+    ) {
+        agreement.status = "EXPIRED";
+        await agreement.save();
 
-    // Payments for this occupant
-    const payments = await repository.findPaymentsByOccupant(occupant._id.toString());
+        if (rental.booking) {
+            await Booking.updateOne(
+                { _id: rental.booking, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+        }
+    }
+
+    const occupants = await repository.findOccupantsByRental(
+        rental._id.toString()
+    );
+
+    const payments = await repository.findPaymentsByOccupant(
+        occupant._id.toString()
+    );
 
     return {
         rental: {
@@ -102,71 +204,87 @@ const getTenantRental = async (tenantId: string) => {
             status: rental.status,
             monthlyRent: rental.monthlyRent,
             securityDeposit: rental.securityDeposit,
-            leaseStart: rental.leaseStart.toISOString(),
-            leaseEnd: rental.leaseEnd.toISOString(),
+            leaseStart: rental.leaseStart ? new Date(rental.leaseStart).toISOString() : "",
+            leaseEnd: rental.leaseEnd ? new Date(rental.leaseEnd).toISOString() : "",
             paymentFrequency: rental.paymentFrequency,
             splitMode: rental.splitMode ?? "EQUAL",
+
             property: {
-                id: (rental.property as any)._id.toString(),
-                title: (rental.property as any).title,
-                propertyType: (rental.property as any).propertyType,
-                address: (rental.property as any).address,
-                image: (rental.property as any).images?.[0]?.url,
-                bedrooms: (rental.property as any).bedrooms,
-                bathrooms: (rental.property as any).bathrooms,
-                areaSqFt: (rental.property as any).areaSqFt,
-                amenities: (rental.property as any).amenities ?? [],
+                id: (rental.property as any)?._id?.toString() ?? "",
+                title: (rental.property as any)?.title ?? "",
+                propertyType: (rental.property as any)?.propertyType ?? "",
+                address: (rental.property as any)?.address ?? {},
+                image: (rental.property as any)?.images?.[0]?.url,
+                bedrooms: (rental.property as any)?.bedrooms ?? 0,
+                bathrooms: (rental.property as any)?.bathrooms ?? 0,
+                areaSqFt: (rental.property as any)?.areaSqFt,
+                amenities: (rental.property as any)?.amenities ?? [],
             },
+
             owner: {
-                id: (rental.owner as any)._id.toString(),
-                name: (rental.owner as any).name,
-                email: (rental.owner as any).email,
-                phone: (rental.owner as any).phone,
+                id: (rental.owner as any)?._id?.toString() ?? "",
+                name: (rental.owner as any)?.name ?? "Owner",
+                email: (rental.owner as any)?.email ?? "",
+                phone: (rental.owner as any)?.phone,
             },
         },
+
         myOccupant: {
             id: occupant._id.toString(),
             rentAmount: occupant.rentAmount,
             securityDepositShare: occupant.securityDepositShare,
             status: occupant.status,
         },
+
         occupants: occupants.map((occ) => ({
             id: occ._id.toString(),
+
             tenant: {
-                id: (occ.tenant as any)._id.toString(),
-                name: (occ.tenant as any).name,
-                email: (occ.tenant as any).email,
+                id: ((occ.tenant as any)?._id ?? occ.tenant)?.toString() ?? "",
+                name: (occ.tenant as any)?.name ?? "Tenant",
+                email: (occ.tenant as any)?.email ?? "",
             },
+
             rentAmount: occ.rentAmount,
             securityDepositShare: occ.securityDepositShare,
             status: occ.status,
         })),
+
         agreement: agreement
             ? {
                   id: agreement._id.toString(),
                   status: agreement.status,
                   monthlyRent: agreement.monthlyRent,
                   securityDepositShare: agreement.securityDepositShare,
-                  leaseStart: agreement.leaseStart.toISOString(),
-                  leaseEnd: agreement.leaseEnd.toISOString(),
+                  leaseStart: agreement.leaseStart ? new Date(agreement.leaseStart).toISOString() : "",
+                  leaseEnd: agreement.leaseEnd ? new Date(agreement.leaseEnd).toISOString() : "",
                   terms: agreement.terms,
-                  tenantAcceptedAt: agreement.tenantAcceptedAt?.toISOString(),
-                  ownerAcceptedAt: agreement.ownerAcceptedAt?.toISOString(),
+                  tenantAcceptedAt: agreement.tenantAcceptedAt
+                      ? new Date(agreement.tenantAcceptedAt).toISOString()
+                      : null,
+                  ownerAcceptedAt: agreement.ownerAcceptedAt
+                      ? new Date(agreement.ownerAcceptedAt).toISOString()
+                      : null,
+                  paymentDeadline: agreement.paymentDeadline
+                      ? new Date(agreement.paymentDeadline).toISOString()
+                      : null,
               }
             : null,
+
         payments: payments.map((p) => ({
             id: p._id.toString(),
             type: p.type,
             amount: p.amount,
             status: p.status.toLowerCase(),
-            dueDate: p.dueDate ? p.dueDate.toISOString() : undefined,
-            paidAt: p.paidAt ? p.paidAt.toISOString() : undefined,
+            dueDate: p.dueDate ? new Date(p.dueDate).toISOString() : null,
+            paidAt: p.paidAt ? new Date(p.paidAt).toISOString() : null,
             billingMonth: p.billingMonth,
             razorpayOrderId: p.razorpayOrderId,
-            created_at: p.created_at.toISOString(),
+            created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
         })),
     };
 };
+
 
 const getAgreementForTenant = async (tenantId: string, agreementId?: string) => {
     const agreement = await repository.findAgreementForTenant(tenantId, agreementId);
@@ -219,6 +337,13 @@ const confirmAgreement = async (
         throw new AppError(404, "Rental agreement not found");
     }
 
+    if (agreement.status === "APPROVED_PENDING_PAYMENT") {
+        throw new AppError(
+            409,
+            "Agreement is already approved and awaiting payment"
+        );
+    }
+
     if (agreement.status !== "PENDING_OWNER") {
         throw new AppError(
             409,
@@ -235,29 +360,55 @@ const confirmAgreement = async (
 
     const now = new Date();
     const paymentDeadline = new Date(
-        now.getTime() + 72 * 60 * 60 * 1000
+        now.getTime() + RENTAL_PAYMENT_DEADLINE_MS
     );
 
-    agreement.ownerAcceptedAt = now;
-    agreement.paymentDeadline = paymentDeadline;
-    agreement.status = "APPROVED_PENDING_PAYMENT";
+    // Atomic update only when status is still PENDING_OWNER to prevent race conditions or resets
+    const updated = await RentalAgreement.findOneAndUpdate(
+        {
+            _id: agreementId,
+            owner: ownerId,
+            status: "PENDING_OWNER",
+            tenantAcceptedAt: { $exists: true, $ne: null },
+        },
+        {
+            $set: {
+                ownerAcceptedAt: now,
+                paymentDeadline,
+                status: "APPROVED_PENDING_PAYMENT",
+            },
+        },
+        { returnDocument: "after" }
+    );
 
-    await agreement.save();
+    if (!updated) {
+        const current = await RentalAgreement.findById(agreementId);
+        if (current?.status === "APPROVED_PENDING_PAYMENT") {
+            throw new AppError(
+                409,
+                "Agreement is already approved and awaiting payment"
+            );
+        }
+        throw new AppError(
+            409,
+            `Agreement cannot be confirmed in state ${current?.status ?? "UNKNOWN"}`
+        );
+    }
 
     // Do not activate the occupant or rental at owner approval.
     // Verified advance payment must drive activation in the payment service.
 
     await notificationService.createNotification({
-        recipient: agreement.tenant.toString(),
+        recipient: updated.tenant.toString(),
         title: "Rental agreement approved",
         message:
-            "The owner approved your rental agreement. Complete your advance payment within 72 hours to proceed.",
+            "The owner approved your rental agreement. Complete your advance payment within 2 minutes or submit a new rental request.",
         type: "rental_approved",
-        referenceId: agreement.rental.toString(),
+        referenceId: updated.rental.toString(),
         referenceType: "property",
     });
 
-    return agreement.toObject();
+    return updated.toObject();
 };
 
 const setRentSplit = async (rentalId: string, ownerId: string, payload: SetRentSplitInput) => {
@@ -450,30 +601,67 @@ const getOwnerRentals = async (ownerId: string) => {
         const payments = await repository.findPaymentsByRental(rental._id.toString());
 
         const occupantsWithDetails = occupants.map((occ) => {
-            const occupantAgreement = agreements.find(
-                (a) => a.tenant._id.toString() === (occ.tenant as any)._id.toString()
-            );
-            const occupantPayments = payments.filter(
-                (p) => p.tenant.toString() === (occ.tenant as any)._id.toString()
-            );
+            const occTenantId = ((occ.tenant as any)?._id ?? occ.tenant)?.toString() ?? "";
+            const occupantAgreement = agreements.find((a) => {
+                const aOccupantId = ((a.occupant as any)?._id ?? a.occupant)?.toString();
+                const aTenantId = ((a.tenant as any)?._id ?? a.tenant)?.toString();
+                return (
+                    (aOccupantId && aOccupantId === occ._id.toString()) ||
+                    (aTenantId && aTenantId === occTenantId)
+                );
+            });
+
+            // Lazy expire overdue agreement
+            const now = new Date();
+            let effectiveAgreementStatus = occupantAgreement?.status ?? "NONE";
+            if (
+                occupantAgreement &&
+                occupantAgreement.status === "APPROVED_PENDING_PAYMENT" &&
+                occupantAgreement.paymentDeadline &&
+                now >= occupantAgreement.paymentDeadline
+            ) {
+                effectiveAgreementStatus = "EXPIRED";
+                void RentalAgreement.updateOne(
+                    { _id: occupantAgreement._id, status: "APPROVED_PENDING_PAYMENT" },
+                    { $set: { status: "EXPIRED" } }
+                );
+                if (rental.booking) {
+                    void Booking.updateOne(
+                        { _id: rental.booking, status: "APPROVED" },
+                        { $set: { status: "EXPIRED" } }
+                    );
+                }
+            }
+
+            const occupantPayments = payments.filter((p) => {
+                const pTenantId = ((p.tenant as any)?._id ?? p.tenant)?.toString();
+                return pTenantId === occTenantId;
+            });
 
             const latestPayment = occupantPayments[0];
 
             return {
                 id: occ._id.toString(),
                 tenant: {
-                    id: (occ.tenant as any)._id.toString(),
-                    name: (occ.tenant as any).name,
-                    email: (occ.tenant as any).email,
-                    phone: (occ.tenant as any).phone,
+                    id: occTenantId,
+                    name: (occ.tenant as any)?.name ?? "Tenant",
+                    email: (occ.tenant as any)?.email ?? "",
+                    phone: (occ.tenant as any)?.phone,
                 },
                 rentAmount: occ.rentAmount,
                 securityDepositShare: occ.securityDepositShare,
                 status: occ.status,
-                agreementStatus: occupantAgreement?.status ?? "NONE",
-                agreementId: occupantAgreement?._id.toString(),
-                tenantAcceptedAt: occupantAgreement?.tenantAcceptedAt?.toISOString(),
-                ownerAcceptedAt: occupantAgreement?.ownerAcceptedAt?.toISOString(),
+                agreementStatus: effectiveAgreementStatus,
+                agreementId: occupantAgreement?._id?.toString(),
+                tenantAcceptedAt: occupantAgreement?.tenantAcceptedAt
+                    ? new Date(occupantAgreement.tenantAcceptedAt).toISOString()
+                    : null,
+                ownerAcceptedAt: occupantAgreement?.ownerAcceptedAt
+                    ? new Date(occupantAgreement.ownerAcceptedAt).toISOString()
+                    : null,
+                paymentDeadline: occupantAgreement?.paymentDeadline
+                    ? new Date(occupantAgreement.paymentDeadline).toISOString()
+                    : null,
                 monthlyPaymentStatus: latestPayment ? latestPayment.status.toUpperCase() : "NO_PAYMENTS",
                 latestPaymentAmount: latestPayment?.amount,
                 latestPaymentMonth: latestPayment?.billingMonth,
@@ -551,4 +739,6 @@ export default {
     setRentSplit,
     getOwnerRentals,
     terminateRental,
+    getOwnerRentalTerms,
+updateOwnerRentalTerms,
 };

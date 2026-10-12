@@ -17,7 +17,9 @@ interface ReminderDetails {
     message: string;
 }
 
+const AGREEMENT_EXPIRY_INTERVAL_MS = 10 * 1000;
 let schedulerInterval: NodeJS.Timeout | null = null;
+let expiryCheckInterval: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
 
 const startOfUtcDay = (date: Date): Date =>
@@ -325,18 +327,43 @@ const generateMonthlyPayments = async (
  * Expires agreements when their exact payment deadline passes.
  * An expired agreement must never be activated by the scheduler.
  */
-const expireUnpaidAgreements = async (
-    now: Date
-): Promise<void> => {
-    await RentalAgreement.updateMany(
+export const expireUnpaidAgreements = async (
+    now: Date = new Date()
+): Promise<number> => {
+    const overdueAgreements = await RentalAgreement.find({
+        status: "APPROVED_PENDING_PAYMENT",
+        paymentDeadline: { $lte: now },
+    })
+        .select("_id rental")
+        .lean();
+
+    if (overdueAgreements.length === 0) {
+        return 0;
+    }
+
+    const overdueIds = overdueAgreements.map((a) => a._id);
+
+    const updateRes = await RentalAgreement.updateMany(
         {
+            _id: { $in: overdueIds },
             status: "APPROVED_PENDING_PAYMENT",
-            paymentDeadline: { $lte: now },
         },
         {
             $set: { status: "EXPIRED" },
         }
     );
+
+    for (const ag of overdueAgreements) {
+        const rental = await Rental.findById(ag.rental).select("booking").lean();
+        if (rental?.booking) {
+            await Booking.updateOne(
+                { _id: rental.booking, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+        }
+    }
+
+    return updateRes.modifiedCount;
 };
 
 /**
@@ -457,7 +484,7 @@ export const runRentalScheduler = async (): Promise<void> => {
             today.getTime() + DAY_MS
         );
 
-        // 1. Expire agreements whose 72-hour deadline has passed.
+        // 1. Expire agreements whose payment deadline has passed.
         await expireUnpaidAgreements(now);
 
         // 2. End rentals whose lease-end calendar day has passed.
@@ -608,22 +635,28 @@ export const runRentalScheduler = async (): Promise<void> => {
 };
 
 export const startRentalScheduler = (): void => {
-    if (schedulerInterval) {
-        return;
+    if (!schedulerInterval) {
+        void runRentalScheduler();
+        schedulerInterval = setInterval(() => {
+            void runRentalScheduler();
+        }, SCHEDULER_INTERVAL_MS);
     }
 
-    void runRentalScheduler();
-
-    schedulerInterval = setInterval(() => {
-        void runRentalScheduler();
-    }, SCHEDULER_INTERVAL_MS);
+    if (!expiryCheckInterval) {
+        expiryCheckInterval = setInterval(() => {
+            void expireUnpaidAgreements();
+        }, AGREEMENT_EXPIRY_INTERVAL_MS);
+    }
 };
 
 export const stopRentalScheduler = (): void => {
-    if (!schedulerInterval) {
-        return;
+    if (schedulerInterval) {
+        clearInterval(schedulerInterval);
+        schedulerInterval = null;
     }
 
-    clearInterval(schedulerInterval);
-    schedulerInterval = null;
+    if (expiryCheckInterval) {
+        clearInterval(expiryCheckInterval);
+        expiryCheckInterval = null;
+    }
 };
