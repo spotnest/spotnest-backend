@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 import Property from "../properties/model.js";
 import { AppError } from "../../shared/errors/AppError.js";
@@ -17,32 +18,62 @@ import {
 } from "../../shared/utils/email.js";
 import type { TenantInquiryStatus, TenantInquiryChoice } from "./type.js";
 
-const createBooking = async (userId: string, payload: CreateBookingInput) => {
+const createBooking = async (
+    userId: string,
+    payload: CreateBookingInput
+) => {
     const property = await Property.findById(payload.propertyId);
+
     if (!property) {
         throw new AppError(404, "Property not found");
     }
+
     if (property.status !== "active") {
-        throw new AppError(400, "This property is not available for rental requests");
+        throw new AppError(
+            400,
+            "This property is not available for rental requests"
+        );
     }
+
     if (property.owner.toString() === userId) {
-        throw new AppError(400, "You cannot request to rent your own property");
+        throw new AppError(
+            400,
+            "You cannot request to rent your own property"
+        );
     }
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    const requestedStart = new Date(Date.UTC(
-        payload.startDate.getUTCFullYear(),
-        payload.startDate.getUTCMonth(),
-        payload.startDate.getUTCDate()
-    ));
-    if (requestedStart < today || payload.endDate <= payload.startDate) {
-        throw new AppError(400, "Choose a future start date and an end date after it");
+
+    const requestedStart = new Date(
+        Date.UTC(
+            payload.startDate.getUTCFullYear(),
+            payload.startDate.getUTCMonth(),
+            payload.startDate.getUTCDate()
+        )
+    );
+
+    if (
+        requestedStart < today ||
+        payload.endDate <= payload.startDate
+    ) {
+        throw new AppError(
+            400,
+            "Choose a future start date and an end date after it"
+        );
     }
 
     const monthlyRent = Number(property.price);
-    const advanceAmount = Number(property.advanceAmount ?? property.price);
-    if (!Number.isFinite(monthlyRent) || monthlyRent <= 0 || !Number.isFinite(advanceAmount) || advanceAmount <= 0) {
+    const advanceAmount = Number(
+        property.advanceAmount ?? property.price
+    );
+
+    if (
+        !Number.isFinite(monthlyRent) ||
+        monthlyRent <= 0 ||
+        !Number.isFinite(advanceAmount) ||
+        advanceAmount <= 0
+    ) {
         throw new AppError(400, "Property rental terms are invalid");
     }
 
@@ -55,7 +86,9 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         propertyId: property._id,
         status: { $in: ["CONFIRMED", "ACTIVE"] },
         endDate: { $gt: today },
-    }).sort({ endDate: -1 }).lean();
+    })
+        .sort({ endDate: -1 })
+        .lean();
 
     const occupiedTenancy = activeRental || confirmedBooking;
     let tenantInquiryPayload: any = undefined;
@@ -68,19 +101,26 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
             (confirmedBooking && confirmedBooking.userId.toString());
 
         if (currentTenantIdStr === userId) {
-            throw new AppError(409, "You already have an active rental for this property");
+            throw new AppError(
+                409,
+                "You already have an active rental for this property"
+            );
         }
 
-        const currentLeaseEnd = activeRental?.leaseEnd ?? confirmedBooking?.endDate;
+        const currentLeaseEnd =
+            activeRental?.leaseEnd ?? confirmedBooking?.endDate;
+
         if (currentLeaseEnd) {
             const currentEndUtc = new Date(currentLeaseEnd);
-            // If requested start date is less than or equal to current lease end:
+
             if (payload.startDate <= currentEndUtc) {
-                const formattedLeaseEnd = currentEndUtc.toLocaleDateString("en-IN", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                });
+                const formattedLeaseEnd =
+                    currentEndUtc.toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                    });
+
                 throw new AppError(
                     400,
                     `This property is currently occupied until ${formattedLeaseEnd}. Your requested rental start date must be strictly after the current lease ends.`
@@ -88,19 +128,29 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
             }
         }
 
-        // Property is currently occupied by another tenant, but new applicant's start date is strictly after current lease end!
-        // Start 3-day (72-hour) tenant extension inquiry
-        const deadline = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-        const formattedStart = payload.startDate.toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-        });
-        const formattedEnd = payload.endDate.toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-        });
+        // Start the 3-day tenant extension inquiry.
+        const deadline = new Date(
+            Date.now() + 3 * 24 * 60 * 60 * 1000
+        );
+
+        const formattedStart = payload.startDate.toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }
+        );
+
+        const formattedEnd = payload.endDate.toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }
+        );
+
         const currentEndFormatted = currentLeaseEnd
             ? new Date(currentLeaseEnd).toLocaleDateString("en-IN", {
                   day: "2-digit",
@@ -130,6 +180,7 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         userId: new mongoose.Types.ObjectId(userId),
         status: { $in: ["PENDING", "APPROVED"] },
     }).lean();
+
     if (myExistingRequest) {
         if (myExistingRequest.status === "APPROVED") {
             const existingRental = await Rental.findOne({
@@ -144,6 +195,7 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
                 : null;
 
             const now = new Date();
+
             const isAgreementExpired =
                 existingAgreement &&
                 (existingAgreement.status === "EXPIRED" ||
@@ -151,12 +203,17 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
                         now >= existingAgreement.paymentDeadline));
 
             if (isAgreementExpired) {
-                // Mark previous booking and agreement expired so tenant can submit new request
+                // Expire the previous booking and agreement so the
+                // tenant can submit a new request.
                 await Booking.updateOne(
                     { _id: myExistingRequest._id },
                     { $set: { status: "EXPIRED" } }
                 );
-                if (existingAgreement && existingAgreement.status !== "EXPIRED") {
+
+                if (
+                    existingAgreement &&
+                    existingAgreement.status !== "EXPIRED"
+                ) {
                     await RentalAgreement.updateOne(
                         { _id: existingAgreement._id },
                         { $set: { status: "EXPIRED" } }
@@ -188,48 +245,70 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
         startDate: payload.startDate,
         endDate: payload.endDate,
         ...(payload.notes ? { notes: payload.notes } : {}),
-        ...(tenantInquiryPayload ? { tenantInquiry: tenantInquiryPayload } : {}),
+        ...(tenantInquiryPayload
+            ? { tenantInquiry: tenantInquiryPayload }
+            : {}),
     });
 
+    // Occupied-property inquiry flow.
     if (tenantInquiryPayload) {
         const currentTenant =
             (activeRental?.tenant as any) ||
-            (await User.findById(tenantInquiryPayload.currentTenantId).select("name email phone"));
+            (await User.findById(
+                tenantInquiryPayload.currentTenantId
+            ).select("name email phone"));
 
-        const formattedDeadline = tenantInquiryPayload.deadline.toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-        });
-        const formattedStart = payload.startDate.toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-        });
-        const formattedEnd = payload.endDate.toLocaleDateString("en-IN", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-        });
+        const formattedDeadline =
+            tenantInquiryPayload.deadline.toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+            });
+
+        const formattedStart = payload.startDate.toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }
+        );
+
+        const formattedEnd = payload.endDate.toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }
+        );
 
         if (currentTenant?.email) {
             try {
-                await sendTenantExtensionInquiryEmail(currentTenant.email, {
-                    propertyTitle: property.title,
-                    tenantName: currentTenant.name || "Tenant",
-                    requestedStartDate: formattedStart,
-                    requestedEndDate: formattedEnd,
-                    deadlineDate: formattedDeadline,
-                });
+                await sendTenantExtensionInquiryEmail(
+                    currentTenant.email,
+                    {
+                        propertyTitle: property.title,
+                        tenantName: currentTenant.name || "Tenant",
+                        requestedStartDate: formattedStart,
+                        requestedEndDate: formattedEnd,
+                        deadlineDate: formattedDeadline,
+                    }
+                );
             } catch (err: any) {
-                console.warn("[TENANT_INQUIRY_EMAIL_FAILED]", err?.message);
+                console.warn(
+                    "[TENANT_INQUIRY_EMAIL_FAILED]",
+                    err?.message
+                );
             }
         }
 
+        // Notify the current tenant.
         await notificationService.notify({
-            recipient: tenantInquiryPayload.currentTenantId.toString(),
+            recipient:
+                tenantInquiryPayload.currentTenantId.toString(),
             title: "Action required: Move-out schedule inquiry",
             message: `Another applicant has requested to rent ${property.title} from ${formattedStart} to ${formattedEnd}. Please confirm whether you will vacate or extend within 3 days.`,
             type: "rental_status",
@@ -238,24 +317,29 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
             data: {
                 bookingId: booking._id.toString(),
                 propertyId: property._id.toString(),
-                paymentDeadline: tenantInquiryPayload.deadline.toISOString(),
+                paymentDeadline:
+                    tenantInquiryPayload.deadline.toISOString(),
             },
             dedupeKey: `tenant-inquiry:${booking._id.toString()}`,
         });
 
-        // Notify new applicant that property is currently occupied
+        // Notify the new applicant.
         await notificationService.notify({
             recipient: userId,
             title: "Property currently occupied",
-            message: "The property is currently occupied. We have contacted the current tenant regarding their move-out schedule and will update you within 3 days.",
+            message:
+                "The property is currently occupied. We have contacted the current tenant regarding their move-out schedule and will update you within 3 days.",
             type: "rental_status",
             referenceId: booking._id.toString(),
             referenceType: "booking",
-            data: { bookingId: booking._id.toString(), propertyId: property._id.toString() },
+            data: {
+                bookingId: booking._id.toString(),
+                propertyId: property._id.toString(),
+            },
             dedupeKey: `occupied-booking-notice:${booking._id.toString()}`,
         });
 
-        // Notify owner
+        // Notify the owner about the occupied property.
         await notificationService.notify({
             recipient: property.owner.toString(),
             title: "New rental request on occupied property",
@@ -263,19 +347,21 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
             type: "rental_request",
             referenceId: booking._id.toString(),
             referenceType: "booking",
-            data: { bookingId: booking._id.toString(), propertyId: property._id.toString() },
+            data: {
+                bookingId: booking._id.toString(),
+                propertyId: property._id.toString(),
+            },
             dedupeKey: `rental-request:${booking._id.toString()}`,
         });
     } else {
-        await notificationService.notify({
+        // Standard rental-request notification from origin/dev.
+        await notificationService.createNotification({
             recipient: property.owner.toString(),
             title: "New rental request",
             message: `A tenant requested to rent ${property.title}.`,
             type: "rental_request",
             referenceId: booking._id.toString(),
             referenceType: "booking",
-            data: { bookingId: booking._id.toString(), propertyId: property._id.toString() },
-            dedupeKey: `rental-request:${booking._id.toString()}`,
         });
     }
 
@@ -289,11 +375,19 @@ const createBooking = async (userId: string, payload: CreateBookingInput) => {
     return booking.toObject();
 };
 
-const getBookingForUser = async (bookingId: string, userId: string) => {
-    const booking = await bookingRepository.findForUser(bookingId, userId);
+const getBookingForUser = async (
+    bookingId: string,
+    userId: string
+) => {
+    const booking = await bookingRepository.findForUser(
+        bookingId,
+        userId
+    );
+
     if (!booking) {
         throw new AppError(404, "Booking not found");
     }
+
     return booking.toObject();
 };
 
@@ -307,15 +401,34 @@ const listOwnerRequests = async (ownerId: string) => {
     return bookings.map((booking) => booking.toObject());
 };
 
-const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBookingInput) => {
-    const booking = await bookingRepository.findForOwner(bookingId, ownerId);
-    if (!booking) throw new AppError(404, "Rental request not found");
-    if (booking.status !== "PENDING") throw new AppError(409, "This rental request has already been reviewed");
+const reviewBooking = async (
+    bookingId: string,
+    ownerId: string,
+    input: ReviewBookingInput
+) => {
+    const booking = await bookingRepository.findForOwner(
+        bookingId,
+        ownerId
+    );
 
+    if (!booking) {
+        throw new AppError(404, "Rental request not found");
+    }
+
+    if (booking.status !== "PENDING") {
+        throw new AppError(
+            409,
+            "This rental request has already been reviewed"
+        );
+    }
+
+    // A request involving an occupied property cannot be approved
+    // while the current tenant's inquiry is still within its deadline.
     if (input.decision === "APPROVED" && booking.tenantInquiry) {
         const now = new Date();
         const isPending = booking.tenantInquiry.status === "PENDING";
-        const isPastDeadline = now >= new Date(booking.tenantInquiry.deadline);
+        const isPastDeadline =
+            now >= new Date(booking.tenantInquiry.deadline);
 
         if (isPending && !isPastDeadline) {
             throw new AppError(
@@ -327,14 +440,13 @@ const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBo
         if (isPending && isPastDeadline) {
             booking.tenantInquiry.status = "EXPIRED_DEEMED_CONSENT";
             booking.tenantInquiry.deemedConsentApplied = true;
-            booking.tenantInquiry.responseMessage = "3-day deadline passed without tenant response. Deemed consent applied.";
+            booking.tenantInquiry.responseMessage =
+                "3-day deadline passed without tenant response. Deemed consent applied.";
         }
     }
 
-    booking.status = input.decision;
-    booking.paymentStatus = input.decision === "APPROVED" ? "ADVANCE_PAYMENT_PENDING" : "NOT_DUE";
     if (input.decision === "APPROVED") {
-        booking.approvedAt = new Date();
+        // Create or reuse a single rental for this booking.
         const rental = await Rental.findOneAndUpdate(
             { booking: booking._id },
             {
@@ -351,9 +463,14 @@ const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBo
                     status: "scheduled",
                 },
             },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
+            {
+                upsert: true,
+                new: true,
+                setDefaultsOnInsert: true,
+            }
         );
 
+        // Create or update the pending occupant and agreement.
         await createDefaultOccupantAndAgreement(
             rental,
             booking.userId.toString(),
@@ -361,40 +478,69 @@ const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBo
             booking.advanceAmount
         );
 
-        // Send agreement email to tenant
+        booking.status = "APPROVED";
+        booking.paymentStatus = "ADVANCE_PAYMENT_PENDING";
+        booking.approvedAt = new Date();
+
+        // Email the tenant about the agreement.
         try {
-            const tenantUser = await User.findById(booking.userId).select("email name");
-            const propertyDoc = await Property.findById(booking.propertyId).select("title");
-            const ownerDoc = await User.findById(booking.ownerId).select("name");
+            const tenantUser = await User.findById(
+                booking.userId
+            ).select("email name");
+
+            const propertyDoc = await Property.findById(
+                booking.propertyId
+            ).select("title");
+
+            const ownerDoc = await User.findById(
+                booking.ownerId
+            ).select("name");
+
             if (tenantUser?.email) {
                 await sendAgreementEmail(tenantUser.email, {
-                    propertyTitle: propertyDoc?.title || "Rental Property",
+                    propertyTitle:
+                        propertyDoc?.title || "Rental Property",
                     ownerName: ownerDoc?.name || "Property Owner",
                     monthlyRent: booking.monthlyRent,
                     securityDeposit: booking.advanceAmount,
                 });
             }
         } catch (err: any) {
-            console.warn("[BOOKING_APPROVAL_AGREEMENT_EMAIL_FAILED]", err?.message);
+            console.warn(
+                "[BOOKING_APPROVAL_AGREEMENT_EMAIL_FAILED]",
+                err?.message
+            );
         }
     } else {
+        booking.status = "REJECTED";
+        booking.paymentStatus = "NOT_DUE";
         booking.rejectedAt = new Date();
     }
-    if (input.decisionNote) booking.decisionNote = input.decisionNote;
+
+    if (input.decisionNote) {
+        booking.decisionNote = input.decisionNote;
+    }
+
     await booking.save();
 
     await notificationService.createNotification({
         recipient: booking.userId.toString(),
-        title: input.decision === "APPROVED" ? "Rental request approved" : "Rental request rejected",
-        message: input.decision === "APPROVED"
-            ? "Your rental request was approved. You can now pay the advance."
-            : "Your rental request was rejected by the property owner.",
-        type: input.decision === "APPROVED" ? "rental_approved" : "rental_rejected",
+        title:
+            input.decision === "APPROVED"
+                ? "Rental request approved"
+                : "Rental request rejected",
+        message:
+            input.decision === "APPROVED"
+                ? "Your rental request was approved. Review and accept the rental agreement before the owner gives final agreement approval and advance payment becomes available."
+                : "Your rental request was rejected by the property owner.",
+        type:
+            input.decision === "APPROVED"
+                ? "rental_approved"
+                : "rental_rejected",
         referenceId: booking._id.toString(),
         referenceType: "booking",
-        data: { bookingId: booking._id.toString(), propertyId: booking.propertyId.toString() },
-        dedupeKey: `rental-request-decision:${booking._id.toString()}`,
     });
+
     emitDashboardUpdate(
         { userIds: [booking.userId, booking.ownerId], admins: true },
         "booking",
@@ -408,7 +554,10 @@ const reviewBooking = async (bookingId: string, ownerId: string, input: ReviewBo
 const respondToTenantInquiry = async (
     bookingId: string,
     tenantId: string,
-    input: { choice: TenantInquiryChoice; message?: string | undefined }
+    input: {
+        choice: TenantInquiryChoice;
+        message?: string | undefined;
+    }
 ) => {
     const booking = await Booking.findOne({
         _id: bookingId,
@@ -420,7 +569,10 @@ const respondToTenantInquiry = async (
     }
 
     if (booking.tenantInquiry.status !== "PENDING") {
-        throw new AppError(409, "You have already responded to this inquiry");
+        throw new AppError(
+            409,
+            "You have already responded to this inquiry"
+        );
     }
 
     let status: TenantInquiryStatus = "CUSTOM_MESSAGE";
@@ -428,19 +580,24 @@ const respondToTenantInquiry = async (
 
     if (input.choice === "MOVE_OUT") {
         status = "ACCEPTED_MOVE_OUT";
-        defaultMessage = "Yes, I am okay. I will end the rent at that time.";
+        defaultMessage =
+            "Yes, I am okay. I will end the rent at that time.";
     } else if (input.choice === "EXTEND") {
         status = "WANTS_EXTENSION";
-        defaultMessage = "No, I am considering extending my rental.";
+        defaultMessage =
+            "No, I am considering extending my rental.";
     } else {
         status = "CUSTOM_MESSAGE";
-        defaultMessage = input.message?.trim() || "Custom response from tenant.";
+        defaultMessage =
+            input.message?.trim() || "Custom response from tenant.";
     }
 
     booking.tenantInquiry.status = status;
     booking.tenantInquiry.responseChoice = input.choice;
-    booking.tenantInquiry.responseMessage = input.message?.trim() || defaultMessage;
+    booking.tenantInquiry.responseMessage =
+        input.message?.trim() || defaultMessage;
     booking.tenantInquiry.respondedAt = new Date();
+
     await booking.save();
 
     await notificationService.notify({
@@ -458,7 +615,14 @@ const respondToTenantInquiry = async (
     });
 
     emitDashboardUpdate(
-        { userIds: [booking.ownerId.toString(), booking.userId.toString(), tenantId], admins: true },
+        {
+            userIds: [
+                booking.ownerId.toString(),
+                booking.userId.toString(),
+                tenantId,
+            ],
+            admins: true,
+        },
         "booking",
         "status_changed",
         booking._id
