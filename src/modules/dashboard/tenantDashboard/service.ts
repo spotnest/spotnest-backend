@@ -4,13 +4,21 @@ import notificationService from "../../notifications/service.js";
 import { emitDashboardUpdate } from "../../../shared/socket/index.js";
 import repository from "./repository.js";
 import type { IMaintenanceRequest, IPayment, IRental } from "./type.js";
+import {
+    DEFAULT_MAINTENANCE_CATEGORY,
+    DEFAULT_MAINTENANCE_PRIORITY,
+    normalizeCategory,
+    normalizePriority,
+} from "../../maintenance/type.js";
 import type { CreateMaintenanceInput } from "./validation.js";
 
 type PopulatedRental = IRental & { property: { _id: { toString(): string }; title: string; propertyType: string; address: { street: string; city: string; state: string; zipCode: string; country: string }; images: { url: string }[]; bedrooms: number; bathrooms: number; areaSqFt?: number; amenities: string[] }; owner: { _id: { toString(): string }; name: string; email: string; phone?: string } };
 
 const date = (value?: Date) => value?.toISOString();
 const paymentResponse = (payment: IPayment) => ({ id: payment._id.toString(), type: payment.type, amount: payment.amount, status: payment.status.toLowerCase(), dueDate: date(payment.dueDate), paidAt: date(payment.paidAt), method: payment.method, referenceId: payment.referenceId, lateFee: payment.lateFee, lateFeeReason: payment.lateFeeReason, billingMonth: payment.billingMonth, createdAt: payment.created_at.toISOString() });
-const maintenanceResponse = (request: IMaintenanceRequest) => ({ id: request._id.toString(), title: request.title, description: request.description, priority: request.priority, category: request.category, status: request.status, ownerResponse: request.ownerResponse, resolution: request.resolution, createdAt: request.created_at.toISOString(), updatedAt: request.updated_at.toISOString() });
+// `ownerResponse`/`resolution` were fields on this module's old maintenance
+// schema; the canonical model records a rejection reason and a resolution note.
+const maintenanceResponse = (request: IMaintenanceRequest) => ({ id: request._id.toString(), title: request.title, description: request.description, priority: request.priority, category: request.category, status: request.status, rejectionReason: request.rejectionReason, resolutionNote: request.resolutionNote, createdAt: request.created_at.toISOString(), updatedAt: request.updated_at.toISOString() });
 
 const rentalResponse = (rental: PopulatedRental) => ({
     id: rental._id.toString(), bookingId: rental.booking?.toString() ?? "", status: rental.status, monthlyRent: rental.monthlyRent, securityDeposit: rental.securityDeposit, leaseStart: rental.leaseStart.toISOString(), leaseEnd: rental.leaseEnd.toISOString(), paymentFrequency: rental.paymentFrequency,
@@ -62,13 +70,14 @@ const getMaintenance = async (tenantId: string) => {
 
 const createMaintenance = async (tenantId: string, input: CreateMaintenanceInput) => {
     const maintenanceModuleService = (await import("../../maintenance/service.js")).default;
-    const cat = (input.category as any) || "Other";
-    const prio = (input.priority as any) || "Normal";
+    // This endpoint predates the maintenance module and accepts free-text
+    // categories and legacy priority names, so both are mapped onto the
+    // canonical enums (falling back to the defaults) before being stored.
     return maintenanceModuleService.createRequest(tenantId, {
         title: input.title,
         description: input.description,
-        category: cat,
-        priority: prio,
+        category: normalizeCategory(input.category) ?? DEFAULT_MAINTENANCE_CATEGORY,
+        priority: normalizePriority(input.priority) ?? DEFAULT_MAINTENANCE_PRIORITY,
     });
 };
 

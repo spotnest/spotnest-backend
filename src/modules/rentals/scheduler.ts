@@ -1,17 +1,25 @@
-
 import { Types } from "mongoose";
+
 import Booking from "../bookings/model.js";
 import { Payment, Rental } from "../dashboard/tenantDashboard/model.js";
-import Notification from "../notifications/model.js";
 import notificationService from "../notifications/service.js";
 import { emitDashboardUpdate } from "../../shared/socket/index.js";
-import { RentalAgreement, RentalOccupant } from "./model.js";
+import {
+    RentalAgreement,
+    RentalOccupant,
+} from "./model.js";
+
 import type { IRental } from "../dashboard/tenantDashboard/type.js";
 
 const SCHEDULER_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const AGREEMENT_EXPIRY_INTERVAL_MS = 10 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-type ReminderStage = "7_DAYS" | "3_DAYS" | "DUE_TODAY" | "OVERDUE";
+type ReminderStage =
+    | "7_DAYS"
+    | "3_DAYS"
+    | "DUE_TODAY"
+    | "OVERDUE";
 
 interface ReminderDetails {
     stage: ReminderStage;
@@ -19,10 +27,14 @@ interface ReminderDetails {
     message: string;
 }
 
-const AGREEMENT_EXPIRY_INTERVAL_MS = 10 * 1000;
 let schedulerInterval: NodeJS.Timeout | null = null;
 let expiryCheckInterval: NodeJS.Timeout | null = null;
 let schedulerRunning = false;
+let expiryCheckRunning = false;
+
+// ============================================================
+// DATE HELPERS
+// ============================================================
 
 const startOfUtcDay = (date: Date): Date =>
     new Date(
@@ -38,6 +50,9 @@ const getBillingMonth = (date: Date): string =>
         date.getUTCMonth() + 1
     ).padStart(2, "0")}`;
 
+const formatInr = (amount: number): string =>
+    `₹${amount.toLocaleString("en-IN")}`;
+
 const isDuplicateKeyError = (error: unknown): boolean =>
     typeof error === "object" &&
     error !== null &&
@@ -45,8 +60,8 @@ const isDuplicateKeyError = (error: unknown): boolean =>
     error.code === 11000;
 
 /**
- * Uses the lease-start day as the monthly due day.
- * Clamps dates such as January 31 to the last day of shorter months.
+ * Uses the lease-start day as the monthly rent due day.
+ * For short months, clamps the day to the month's last day.
  */
 const dueDateForMonth = (
     leaseStart: Date,
@@ -64,32 +79,118 @@ const dueDateForMonth = (
         Date.UTC(year, monthIndex + 1, 0)
     ).getUTCDate();
 
-    const day = Math.min(leaseStart.getUTCDate(), lastDay);
+    const day = Math.min(
+        leaseStart.getUTCDate(),
+        lastDay
+    );
 
-    return new Date(Date.UTC(year, monthIndex, day));
+    return new Date(
+        Date.UTC(year, monthIndex, day)
+    );
 };
 
-const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
+// ============================================================
+// NOTIFICATION HELPERS
+// ============================================================
 
-const rentalTenantIds = async (rental: IRental): Promise<string[]> => {
-    const occupants = await RentalOccupant.find({ rental: rental._id }).select("tenant");
-    return [...new Set([rental.tenant.toString(), ...occupants.map((occupant) => occupant.tenant.toString())])];
+const getReminderDetails = (
+    amount: number,
+    billingMonth: string,
+    diffDays: number,
+    paymentStatus: string
+): ReminderDetails | null => {
+    const formattedAmount = amount.toLocaleString("en-IN");
+
+    if (diffDays === 7) {
+        return {
+            stage: "7_DAYS",
+            title: "Rent Reminder: Due in 7 days",
+            message:
+                `Your monthly rent of ₹${formattedAmount} ` +
+                `for ${billingMonth} is due in 7 days.`,
+        };
+    }
+
+    if (diffDays === 3) {
+        return {
+            stage: "3_DAYS",
+            title: "Rent Reminder: Due in 3 days",
+            message:
+                `Your monthly rent of ₹${formattedAmount} ` +
+                `for ${billingMonth} is due in 3 days.`,
+        };
+    }
+
+    if (diffDays === 0) {
+        return {
+            stage: "DUE_TODAY",
+            title: "Rent Reminder: Due Today",
+            message:
+                `Your monthly rent of ₹${formattedAmount} ` +
+                `for ${billingMonth} is due today.`,
+        };
+    }
+
+    if (
+        diffDays < 0 &&
+        paymentStatus === "OVERDUE"
+    ) {
+        return {
+            stage: "OVERDUE",
+            title: "Rent Overdue Alert",
+            message:
+                `Your monthly rent of ₹${formattedAmount} ` +
+                `for ${billingMonth} is overdue. ` +
+                "Please make your payment promptly.",
+        };
+    }
+
+    return null;
+};
+
+const rentalTenantIds = async (
+    rental: IRental
+): Promise<string[]> => {
+    const occupants = await RentalOccupant.find({
+        rental: rental._id,
+    })
+        .select("tenant")
+        .lean();
+
+    return [
+        ...new Set([
+            rental.tenant.toString(),
+            ...occupants.map((occupant) =>
+                occupant.tenant.toString()
+            ),
+        ]),
+    ];
 };
 
 /**
- * Notifies everyone on a rental about a lifecycle change. Dedupe keys make
- * this safe to run on every scheduler pass.
+ * Notifies all tenants and the owner when a rental starts or ends.
+ * The notification service must enforce dedupeKey atomically
+ * for reliable duplicate protection across multiple processes.
  */
 const notifyRentalLifecycle = async (
     rental: IRental,
     event: "started" | "ended",
     tenantIds: string[]
 ): Promise<void> => {
-    const data = { rentalId: rental._id.toString(), propertyId: rental.property.toString() };
-    const tenantMessage = event === "started"
+    const rentalId = rental._id.toString();
+
+    const data = {
+        rentalId,
+        propertyId: rental.property.toString(),
+    };
+
+    const started = event === "started";
+
+    const tenantMessage = started
         ? "Your lease has started and your rental is now active."
         : "Your lease period has ended and the rental is now closed.";
-    const ownerMessage = event === "started"
+
+    const ownerMessage = started
         ? "A scheduled rental for your property is now active."
         : "A rental for your property has reached its lease end date and is now closed.";
 
@@ -97,29 +198,40 @@ const notifyRentalLifecycle = async (
         ...tenantIds.map((tenantId) =>
             notificationService.notify({
                 recipient: tenantId,
-                title: event === "started" ? "Lease started" : "Lease ended",
+                title: started
+                    ? "Lease started"
+                    : "Lease ended",
                 message: tenantMessage,
                 type: "rental_status",
-                referenceId: rental._id.toString(),
+                referenceId: rentalId,
                 referenceType: "rental",
                 data,
-                dedupeKey: `rental-${event}:${rental._id.toString()}`,
+                dedupeKey: `rental-${event}:${rentalId}`,
             })
         ),
+
         notificationService.notify({
             recipient: rental.owner.toString(),
-            title: event === "started" ? "Rental started" : "Rental ended",
+            title: started
+                ? "Rental started"
+                : "Rental ended",
             message: ownerMessage,
             type: "rental_status",
-            referenceId: rental._id.toString(),
+            referenceId: rentalId,
             referenceType: "rental",
             data,
-            dedupeKey: `rental-${event}:${rental._id.toString()}`,
+            dedupeKey: `rental-${event}:${rentalId}`,
         }),
     ]);
 
     emitDashboardUpdate(
-        { userIds: [rental.owner, ...tenantIds], admins: true },
+        {
+            userIds: [
+                rental.owner,
+                ...tenantIds,
+            ],
+            admins: true,
+        },
         "rental",
         "status_changed",
         rental._id
@@ -127,20 +239,21 @@ const notifyRentalLifecycle = async (
 };
 
 // ============================================================
-// RENTAL SCHEDULER
+// LEGACY OCCUPANT COMPATIBILITY
 // ============================================================
 
 /**
- * Backward compatibility for older active rentals.
- * Never creates an occupant for a scheduled rental.
+ * Creates a legacy occupant only for older active rentals.
  */
-const ensureLegacyOccupant = async (rental: {
-    _id: Types.ObjectId;
-    tenant?: Types.ObjectId;
-    monthlyRent: number;
-    securityDeposit: number;
-    leaseStart: Date;
-}): Promise<void> => {
+const ensureLegacyOccupant = async (
+    rental: {
+        _id: Types.ObjectId;
+        tenant?: Types.ObjectId;
+        monthlyRent: number;
+        securityDeposit: number;
+        leaseStart: Date;
+    }
+): Promise<void> => {
     if (!rental.tenant) {
         return;
     }
@@ -170,11 +283,15 @@ const ensureLegacyOccupant = async (rental: {
         }
     }
 };
+
+// ============================================================
+// MONTHLY PAYMENT GENERATION
+// ============================================================
+
 /**
- * Generates monthly rent payments for active occupants.
- *
- * Requires a unique index for:
- * rental + occupant + type + billingMonth
+ * Generates one monthly payment per eligible occupant and billing
+ * month. A unique database index is required to prevent duplicate
+ * payments during concurrent scheduler runs.
  */
 const generateMonthlyPayments = async (
     rental: {
@@ -182,7 +299,6 @@ const generateMonthlyPayments = async (
         booking?: Types.ObjectId;
         property: Types.ObjectId;
         owner: Types.ObjectId;
-        monthlyRent: number;
         leaseStart: Date;
         leaseEnd: Date;
     },
@@ -196,10 +312,18 @@ const generateMonthlyPayments = async (
     }>,
     today: Date
 ): Promise<void> => {
-    const leaseStartDay = startOfUtcDay(rental.leaseStart);
-    const leaseEndDay = startOfUtcDay(rental.leaseEnd);
+    const leaseStartDay = startOfUtcDay(
+        rental.leaseStart
+    );
 
-    if (leaseStartDay > today || leaseEndDay < leaseStartDay) {
+    const leaseEndDay = startOfUtcDay(
+        rental.leaseEnd
+    );
+
+    if (
+        leaseStartDay > today ||
+        leaseEndDay < leaseStartDay
+    ) {
         return;
     }
 
@@ -240,7 +364,7 @@ const generateMonthlyPayments = async (
                 if (
                     occupant.joinedAt &&
                     startOfUtcDay(occupant.joinedAt) >
-                        startOfUtcDay(dueDate)
+                    startOfUtcDay(dueDate)
                 ) {
                     continue;
                 }
@@ -248,7 +372,7 @@ const generateMonthlyPayments = async (
                 if (
                     occupant.leftAt &&
                     startOfUtcDay(occupant.leftAt) <
-                        startOfUtcDay(dueDate)
+                    startOfUtcDay(dueDate)
                 ) {
                     continue;
                 }
@@ -266,7 +390,9 @@ const generateMonthlyPayments = async (
                         {
                             $setOnInsert: {
                                 ...(rental.booking
-                                    ? { booking: rental.booking }
+                                    ? {
+                                        booking: rental.booking,
+                                    }
                                     : {}),
                                 rental: rental._id,
                                 occupant: occupant._id,
@@ -296,20 +422,28 @@ const generateMonthlyPayments = async (
             }
         }
 
-        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+        cursor.setUTCMonth(
+            cursor.getUTCMonth() + 1
+        );
     }
 };
 
+// ============================================================
+// AGREEMENT EXPIRATION
+// ============================================================
+
 /**
- * Expires agreements when their exact payment deadline passes.
- * An expired agreement must never be activated by the scheduler.
+ * Expires approved agreements when their payment deadline passes.
+ * An expired agreement must never activate its rental.
  */
 export const expireUnpaidAgreements = async (
     now: Date = new Date()
 ): Promise<number> => {
     const overdueAgreements = await RentalAgreement.find({
         status: "APPROVED_PENDING_PAYMENT",
-        paymentDeadline: { $lte: now },
+        paymentDeadline: {
+            $lte: now,
+        },
     })
         .select("_id rental")
         .lean();
@@ -318,34 +452,56 @@ export const expireUnpaidAgreements = async (
         return 0;
     }
 
-    const overdueIds = overdueAgreements.map((a) => a._id);
+    const overdueIds = overdueAgreements.map(
+        (agreement) => agreement._id
+    );
 
-    const updateRes = await RentalAgreement.updateMany(
+    const updateResult = await RentalAgreement.updateMany(
         {
-            _id: { $in: overdueIds },
+            _id: {
+                $in: overdueIds,
+            },
             status: "APPROVED_PENDING_PAYMENT",
         },
         {
-            $set: { status: "EXPIRED" },
+            $set: {
+                status: "EXPIRED",
+            },
         }
     );
 
-    for (const ag of overdueAgreements) {
-        const rental = await Rental.findById(ag.rental).select("booking").lean();
+    for (const agreement of overdueAgreements) {
+        const rental = await Rental.findById(
+            agreement.rental
+        )
+            .select("booking")
+            .lean();
+
         if (rental?.booking) {
             await Booking.updateOne(
-                { _id: rental.booking, status: "APPROVED" },
-                { $set: { status: "EXPIRED" } }
+                {
+                    _id: rental.booking,
+                    status: "APPROVED",
+                },
+                {
+                    $set: {
+                        status: "EXPIRED",
+                    },
+                }
             );
         }
     }
 
-    return updateRes.modifiedCount;
+    return updateResult.modifiedCount;
 };
+
+// ============================================================
+// SCHEDULED RENTAL ACTIVATION
+// ============================================================
 
 /**
  * Activates a scheduled rental only when every current occupant:
- * - has ACTIVE occupant status;
+ * - has ACTIVE status;
  * - has an ACTIVE agreement;
  * - has an advancePaidAt timestamp;
  * - has a PAID advance payment.
@@ -356,8 +512,12 @@ const activateEligibleScheduledRentals = async (
 ): Promise<void> => {
     const scheduledRentals = await Rental.find({
         status: "scheduled",
-        leaseStart: { $lt: tomorrow },
-        leaseEnd: { $gte: today },
+        leaseStart: {
+            $lt: tomorrow,
+        },
+        leaseEnd: {
+            $gte: today,
+        },
     })
         .select("_id booking")
         .lean();
@@ -365,7 +525,9 @@ const activateEligibleScheduledRentals = async (
     for (const rental of scheduledRentals) {
         const occupants = await RentalOccupant.find({
             rental: rental._id,
-            status: { $nin: ["TERMINATED", "LEFT"] },
+            status: {
+                $nin: ["TERMINATED", "LEFT"],
+            },
         })
             .select("_id tenant status")
             .lean();
@@ -415,19 +577,25 @@ const activateEligibleScheduledRentals = async (
             continue;
         }
 
-        // Conditional update avoids overwriting a changed rental state.
         const activation = await Rental.updateOne(
             {
                 _id: rental._id,
                 status: "scheduled",
-                leaseStart: { $lt: tomorrow },
-                leaseEnd: { $gte: today },
+                leaseStart: {
+                    $lt: tomorrow,
+                },
+                leaseEnd: {
+                    $gte: today,
+                },
             },
             {
-                $set: { status: "active" },
+                $set: {
+                    status: "active",
+                },
             }
         );
 
+        // Another scheduler or request may have changed the state.
         if (activation.modifiedCount === 0) {
             continue;
         }
@@ -436,18 +604,212 @@ const activateEligibleScheduledRentals = async (
             await Booking.updateOne(
                 {
                     _id: rental.booking,
-                    status: { $in: ["CONFIRMED", "APPROVED"] },
+                    status: {
+                        $in: ["CONFIRMED", "APPROVED"],
+                    },
                 },
                 {
-                    $set: { status: "ACTIVE" },
+                    $set: {
+                        status: "ACTIVE",
+                    },
                 }
+            );
+        }
+
+        const fullRental = await Rental.findById(
+            rental._id
+        ).lean();
+
+        if (fullRental) {
+            const tenantIds = await rentalTenantIds(
+                fullRental as unknown as IRental
+            );
+
+            await notifyRentalLifecycle(
+                fullRental as unknown as IRental,
+                "started",
+                tenantIds
             );
         }
     }
 };
 
+// ============================================================
+// OVERDUE PAYMENTS
+// ============================================================
+
+/**
+ * Changes overdue monthly rent from PENDING to OVERDUE.
+ * Notifications and dashboard updates happen only when the
+ * conditional update actually changes the payment.
+ */
+const processOverduePayments = async (
+    today: Date
+): Promise<void> => {
+    const payments = await Payment.find({
+        type: "MONTHLY_RENT",
+        status: "PENDING",
+        dueDate: {
+            $lt: today,
+        },
+    }).lean();
+
+    for (const payment of payments) {
+        const transition = await Payment.updateOne(
+            {
+                _id: payment._id,
+                status: "PENDING",
+            },
+            {
+                $set: {
+                    status: "OVERDUE",
+                },
+            }
+        );
+
+        if (transition.modifiedCount === 0) {
+            continue;
+        }
+
+        if (payment.owner) {
+            await notificationService.notify({
+                recipient: payment.owner.toString(),
+                title: "Rent overdue",
+                message:
+                    `Rent of ${formatInr(payment.amount)} ` +
+                    `for ${payment.billingMonth} is overdue.`,
+                type: "rent_due",
+                referenceId: payment._id.toString(),
+                referenceType: "payment",
+                data: {
+                    paymentId: payment._id.toString(),
+                    ...(payment.rental
+                        ? {
+                            rentalId: payment.rental.toString(),
+                        }
+                        : {}),
+                },
+                dedupeKey:
+                    `rent-overdue-owner:${payment._id.toString()}`,
+            });
+        }
+
+        emitDashboardUpdate(
+            {
+                userIds: [
+                    payment.tenant,
+                    ...(payment.owner ? [payment.owner] : []),
+                ],
+                admins: true,
+            },
+            "payment",
+            "overdue",
+            payment._id
+        );
+    }
+};
+
+// ============================================================
+// RENT REMINDERS
+// ============================================================
+
+/**
+ * Sends tenant reminders at 7 days, 3 days, on the due date,
+ * and daily after the payment becomes overdue.
+ */
+const processRentReminders = async (
+    today: Date
+): Promise<void> => {
+    const payments = await Payment.find({
+        type: "MONTHLY_RENT",
+        status: {
+            $in: ["PENDING", "OVERDUE", "DUE"],
+        },
+        dueDate: {
+            $exists: true,
+            $ne: null,
+        },
+    })
+        .select(
+            "_id tenant amount billingMonth dueDate status rental booking"
+        )
+        .lean();
+
+    for (const payment of payments) {
+        if (
+            !payment.dueDate ||
+            !payment.billingMonth
+        ) {
+            continue;
+        }
+
+        const dueDay = startOfUtcDay(
+            new Date(payment.dueDate)
+        );
+
+        const diffDays = Math.round(
+            (dueDay.getTime() - today.getTime()) /
+            DAY_MS
+        );
+
+        const details = getReminderDetails(
+            payment.amount,
+            payment.billingMonth,
+            diffDays,
+            payment.status
+        );
+
+        if (!details) {
+            continue;
+        }
+
+        const dayKey = today
+            .toISOString()
+            .slice(0, 10);
+
+        const dedupeKey =
+            details.stage === "OVERDUE"
+                ? `rent-reminder:${payment._id.toString()}:overdue:${dayKey}`
+                : `rent-reminder:${payment._id.toString()}:${details.stage}`;
+
+        try {
+            await notificationService.notify({
+                recipient: payment.tenant.toString(),
+                title: details.title,
+                message: details.message,
+                type: "rent_due",
+                referenceId: payment._id.toString(),
+                referenceType: "payment",
+                data: {
+                    paymentId: payment._id.toString(),
+                    ...(payment.rental
+                        ? {
+                            rentalId: payment.rental.toString(),
+                        }
+                        : {}),
+                    ...(payment.booking
+                        ? {
+                            bookingId: payment.booking.toString(),
+                        }
+                        : {}),
+                },
+                dedupeKey,
+            });
+        } catch (error) {
+            console.error(
+                `Failed rent reminder for payment ${payment._id}:`,
+                error
+            );
+        }
+    }
+};
+
+// ============================================================
+// MAIN RENTAL SCHEDULER
+// ============================================================
+
 export const runRentalScheduler = async (): Promise<void> => {
-    // Prevent overlapping runs in this Node.js process.
+    // Prevent overlapping executions in this Node.js process.
     if (schedulerRunning) {
         return;
     }
@@ -457,38 +819,52 @@ export const runRentalScheduler = async (): Promise<void> => {
     try {
         const now = new Date();
         const today = startOfUtcDay(now);
+
         const tomorrow = new Date(
             today.getTime() + DAY_MS
         );
 
-        // 1. Expire agreements whose payment deadline has passed.
+        // 1. Expire unpaid agreements.
         await expireUnpaidAgreements(now);
 
-        // 2. End rentals whose lease-end calendar day has passed.
+        // 2. End rentals whose lease-end day has passed.
         const expiredRentals = await Rental.find({
-            status: { $in: ["scheduled", "active"] },
-            leaseEnd: { $lt: today },
-        });
+            status: {
+                $in: ["scheduled", "active"],
+            },
+            leaseEnd: {
+                $lt: today,
+            },
+        }).lean();
 
-        if (expiredRentals.length > 0) {
-            const expiredRentalIds = expiredRentals.map(
-                (rental) => rental._id
-            );
-
-            await Rental.updateMany(
+        for (const rental of expiredRentals) {
+            const transition = await Rental.updateOne(
                 {
-                    _id: { $in: expiredRentalIds },
-                    status: { $in: ["scheduled", "active"] },
+                    _id: rental._id,
+                    status: {
+                        $in: ["scheduled", "active"],
+                    },
+                    leaseEnd: {
+                        $lt: today,
+                    },
                 },
                 {
-                    $set: { status: "ended" },
+                    $set: {
+                        status: "ended",
+                    },
                 }
             );
 
+            if (transition.modifiedCount === 0) {
+                continue;
+            }
+
             await RentalOccupant.updateMany(
                 {
-                    rental: { $in: expiredRentalIds },
-                    status: { $in: ["ACTIVE", "PENDING", "LEFT"] },
+                    rental: rental._id,
+                    status: {
+                        $in: ["ACTIVE", "PENDING", "LEFT"],
+                    },
                 },
                 {
                     $set: {
@@ -498,32 +874,41 @@ export const runRentalScheduler = async (): Promise<void> => {
                 }
             );
 
-            for (const rental of expiredRentals) {
-                await notifyRentalLifecycle(rental, "ended", await rentalTenantIds(rental));
-            }
+            // Notify only the rental that actually transitioned.
+            const tenantIds = await rentalTenantIds(
+                rental as unknown as IRental
+            );
+
+            await notifyRentalLifecycle(
+                rental as unknown as IRental,
+                "ended",
+                tenantIds
+            );
         }
 
-        // 3. Never activate scheduled rentals without valid agreements
-        // and paid advances for all current occupants.
+        // 3. Activate eligible scheduled rentals.
         await activateEligibleScheduledRentals(
             today,
             tomorrow
         );
 
-        // 4. Find active rentals eligible for monthly billing.
+        // 4. Generate monthly rent payments for active rentals.
         const activeRentals = await Rental.find({
             status: "active",
-            leaseStart: { $lt: tomorrow },
-            leaseEnd: { $gte: today },
+            leaseStart: {
+                $lt: tomorrow,
+            },
+            leaseEnd: {
+                $gte: today,
+            },
         })
             .select(
                 "_id booking property owner tenant monthlyRent " +
-                    "securityDeposit leaseStart leaseEnd"
+                "securityDeposit leaseStart leaseEnd"
             )
             .lean();
 
         for (const rental of activeRentals) {
-            // Compatibility for older active rental records.
             await ensureLegacyOccupant(rental);
 
             const occupants = await RentalOccupant.find({
@@ -546,152 +931,11 @@ export const runRentalScheduler = async (): Promise<void> => {
             );
         }
 
-        // 5. Mark unpaid monthly rent past its due date as overdue.
-        const overduePayments = await Payment.find({
-            type: "MONTHLY_RENT",
-            status: "PENDING",
-            dueDate: { $lt: today },
-        });
+        // 5. Process overdue payments.
+        await processOverduePayments(today);
 
-        for (const payment of overduePayments) {
-            // Conditional update: only the pass that actually moves the
-            // payment to OVERDUE notifies the owner and refreshes dashboards.
-            const transition = await Payment.updateOne(
-                { _id: payment._id, status: "PENDING" },
-                { $set: { status: "OVERDUE" } }
-            );
-            if (transition.modifiedCount === 0) continue;
-
-            if (payment.owner) {
-                await notificationService.notify({
-                    recipient: payment.owner.toString(),
-                    title: "Rent overdue",
-                    message: `Rent of ${formatInr(payment.amount)} for ${payment.billingMonth} is overdue.`,
-                    type: "rent_due",
-                    referenceId: payment._id.toString(),
-                    referenceType: "payment",
-                    data: {
-                        paymentId: payment._id.toString(),
-                        ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
-                    },
-                    dedupeKey: `rent-overdue-owner:${payment._id.toString()}`,
-                });
-            }
-            emitDashboardUpdate(
-                { userIds: [payment.tenant, payment.owner], admins: true },
-                "payment",
-                "overdue",
-                payment._id
-            );
-        }
-
-        // 6. Send due-date reminders.
-        const activePayments = await Payment.find({
-            type: "MONTHLY_RENT",
-            status: { $in: ["PENDING", "OVERDUE", "DUE"] },
-            dueDate: { $exists: true, $ne: null },
-        })
-            .select(
-                "_id tenant amount billingMonth dueDate status rental booking"
-            )
-            .lean();
-
-        for (const payment of activePayments) {
-            if (!payment.dueDate || !payment.billingMonth) {
-                continue;
-            }
-
-            const dueDay = startOfUtcDay(
-                new Date(payment.dueDate)
-            );
-
-            const diffDays = Math.round(
-                (dueDay.getTime() - today.getTime()) /
-                    DAY_MS
-            );
-
-            let notificationTitle = "";
-            let notificationMessage = "";
-            // Reminders run on every 6-hour pass; the key limits each
-            // reminder to once (overdue alerts: once per day).
-            let dedupeKey = `rent-reminder:${payment._id.toString()}:d${diffDays}`;
-
-            // 7 DAYS BEFORE
-            if (diffDays === 7) {
-                notificationTitle =
-                    "Rent Reminder: Due in 7 days";
-
-                notificationMessage =
-                    `Your monthly rent of ₹${payment.amount.toLocaleString(
-                        "en-IN"
-                    )} for ${
-                        payment.billingMonth
-                    } is due in 7 days.`;
-            }
-
-            // 3 DAYS BEFORE
-            else if (diffDays === 3) {
-                notificationTitle =
-                    "Rent Reminder: Due in 3 days";
-
-                notificationMessage =
-                    `Your monthly rent of ₹${payment.amount.toLocaleString(
-                        "en-IN"
-                    )} for ${
-                        payment.billingMonth
-                    } is due in 3 days.`;
-            }
-
-            // DUE TODAY
-            else if (diffDays === 0) {
-                notificationTitle =
-                    "Rent Reminder: Due Today";
-
-                notificationMessage =
-                    `Your monthly rent of ₹${payment.amount.toLocaleString(
-                        "en-IN"
-                    )} for ${
-                        payment.billingMonth
-                    } is due today.`;
-            }
-
-            // OVERDUE
-            else if (
-                diffDays < 0 &&
-                payment.status === "OVERDUE"
-            ) {
-                notificationTitle =
-                    "Rent Overdue Alert";
-
-                dedupeKey = `rent-overdue:${payment._id.toString()}:${today.toISOString().slice(0, 10)}`;
-
-                notificationMessage =
-                    `Your monthly rent of ₹${payment.amount.toLocaleString(
-                        "en-IN"
-                    )} for ${
-                        payment.billingMonth
-                    } is overdue. Please make your payment promptly.`;
-            }
-
-            if (!notificationTitle) {
-                continue;
-            }
-
-            await notificationService.notify({
-                recipient: payment.tenant.toString(),
-                title: notificationTitle,
-                message: notificationMessage,
-                type: "rent_due",
-                referenceId: payment._id.toString(),
-                referenceType: "payment",
-                data: {
-                    paymentId: payment._id.toString(),
-                    ...(payment.rental ? { rentalId: payment.rental.toString() } : {}),
-                    ...(payment.booking ? { bookingId: payment.booking.toString() } : {}),
-                },
-                dedupeKey,
-            });
-        }
+        // 6. Send rent reminders.
+        await processRentReminders(today);
     } catch (error) {
         console.error(
             "Error running rental scheduler:",
@@ -702,9 +946,14 @@ export const runRentalScheduler = async (): Promise<void> => {
     }
 };
 
+// ============================================================
+// START / STOP SCHEDULER
+// ============================================================
+
 export const startRentalScheduler = (): void => {
     if (!schedulerInterval) {
         void runRentalScheduler();
+
         schedulerInterval = setInterval(() => {
             void runRentalScheduler();
         }, SCHEDULER_INTERVAL_MS);
@@ -712,7 +961,22 @@ export const startRentalScheduler = (): void => {
 
     if (!expiryCheckInterval) {
         expiryCheckInterval = setInterval(() => {
-            void expireUnpaidAgreements();
+            if (expiryCheckRunning) {
+                return;
+            }
+
+            expiryCheckRunning = true;
+
+            void expireUnpaidAgreements()
+                .catch((error) => {
+                    console.error(
+                        "Error expiring unpaid agreements:",
+                        error
+                    );
+                })
+                .finally(() => {
+                    expiryCheckRunning = false;
+                });
         }, AGREEMENT_EXPIRY_INTERVAL_MS);
     }
 };

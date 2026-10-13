@@ -1,5 +1,7 @@
-import { MaintenanceRequest, Payment, Rental } from "./model.js";
-import type { IMaintenanceRequest, IPayment, IRental } from "./type.js";
+import { Payment, Rental } from "./model.js";
+// Maintenance is owned by the maintenance module; this module only reads it.
+import { MaintenanceRequest } from "../../maintenance/model.js";
+import type { IPayment, IRental } from "./type.js";
 
 const findActiveRental = (tenant: string) =>
     Rental.findOne({ tenant, status: "active" })
@@ -32,7 +34,4 @@ const activateDueRentals = async (tenant: string) => {
 const findMaintenance = (tenant: string, rental: string) =>
     MaintenanceRequest.find({ tenant, rental })
         .sort({ created_at: -1 });
-const createMaintenance = (data: Pick<IMaintenanceRequest, "rental" | "property" | "tenant" | "owner" | "title" | "description" | "priority"> & Partial<Pick<IMaintenanceRequest, "category">>) =>
-    MaintenanceRequest.create(data);
-
-export default { findActiveRental, findPayments, findMaintenance, createMaintenance, activateDueRentals };
+export default { findActiveRental, findPayments, findMaintenance, activateDueRentals };
