@@ -9,7 +9,12 @@ const connectDB = async (): Promise<void> => {
             throw new Error('MONGO_URI is not defined in environment variables');
         }
 
-        await mongoose.connect(mongoUri);
+        await mongoose.connect(mongoUri, {
+            serverSelectionTimeoutMS: 15000,
+            maxIdleTimeMS: 30000,
+            socketTimeoutMS: 45000,
+            retryWrites: true,
+        });
 
         console.log('MongoDB connected successfully');
     } catch (error) {

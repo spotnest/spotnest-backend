@@ -17,5 +17,6 @@ router.get("/owner/list", protect, requireRole(UserRole.OWNER), controller.getOw
 router.post("/owner/:rentalId/split", protect, requireRole(UserRole.OWNER), controller.setRentSplit);
 router.post("/owner/agreements/:agreementId/confirm", protect, requireRole(UserRole.OWNER), controller.confirmAgreement);
 router.post("/owner/:rentalId/terminate", protect, requireRole(UserRole.OWNER), controller.terminateRental);
-
+router.get("/owner/terms",protect,requireRole(UserRole.OWNER),controller.getOwnerRentalTerms);
+router.put("/owner/terms",protect,requireRole(UserRole.OWNER),controller.updateOwnerRentalTerms);
 export default router;

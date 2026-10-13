@@ -51,10 +51,10 @@ const createGatewayOrder = async (input: {
 
     const occupant = rental
         ? await RentalOccupant.findOne({
-              rental: rental._id,
-              tenant: input.userId,
-              status: { $nin: ["TERMINATED", "LEFT"] },
-          }).exec()
+            rental: rental._id,
+            tenant: input.userId,
+            status: { $nin: ["TERMINATED", "LEFT"] },
+        }).exec()
         : null;
 
     let payAmount = input.amount;
@@ -86,6 +86,7 @@ const createGatewayOrder = async (input: {
             throw new AppError(409, "Rental agreement not found");
         }
 
+
         if (agreement.status !== "APPROVED_PENDING_PAYMENT") {
             throw new AppError(
                 409,
@@ -93,17 +94,37 @@ const createGatewayOrder = async (input: {
             );
         }
 
+        // Require proof that both parties accepted the agreement.
+        if (!agreement.tenantAcceptedAt || !agreement.ownerAcceptedAt) {
+            throw new AppError(
+                409,
+                "Both the tenant and owner must accept the rental agreement before advance payment"
+            );
+        }
+
+        // Do not allow payment after the agreement deadline.
         const now = new Date();
 
         if (!agreement.paymentDeadline || now >= agreement.paymentDeadline) {
             agreement.status = "EXPIRED";
             await agreement.save();
 
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
+
             throw new AppError(
                 409,
                 "The agreement payment deadline has expired. Contact the property owner."
             );
         }
+
+        // Always use the advance amount stored on the server.
+        payAmount = booking.advanceAmount;
+
+
+
 
         // Use the server-side booking amount, not a client-supplied amount.
         payAmount = booking.advanceAmount;
@@ -210,9 +231,8 @@ const createGatewayOrder = async (input: {
             const createdOrder = await client.orders.create({
                 amount: amountInPaise,
                 currency: "INR",
-                receipt: `sn_${booking._id.toString().slice(-10)}_${
-                    input.type === "ADVANCE" ? "adv" : receiptMonth
-                }_${Date.now()}`,
+                receipt: `sn_${booking._id.toString().slice(-10)}_${input.type === "ADVANCE" ? "adv" : receiptMonth
+                    }_${Date.now()}`,
             });
 
             order = createdOrder as unknown as GatewayOrder;
@@ -247,8 +267,8 @@ const createGatewayOrder = async (input: {
                 throw new AppError(
                     400,
                     errObj?.error?.description ||
-                        errObj?.message ||
-                        "Failed to create payment order"
+                    errObj?.message ||
+                    "Failed to create payment order"
                 );
             }
         }
@@ -294,6 +314,13 @@ const createGatewayOrder = async (input: {
     };
 };
 
+const formatInr = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
+
+/**
+ * Called exactly once per payment, by whichever path (client verify or
+ * webhook) performed the PAID transition. Dedupe keys additionally guard
+ * against a retried request re-running this.
+ */
 const notifyPaymentSuccess = async (
     booking: {
         _id: { toString(): string };
@@ -311,11 +338,11 @@ const notifyPaymentSuccess = async (
 
         const msgTenant = isAdvance
             ? `Your advance payment of ₹${payment.amount.toLocaleString(
-                  "en-IN"
-              )} was received. Rental activation depends on agreement and payment validation.`
+                "en-IN"
+            )} was received. Rental activation depends on agreement and payment validation.`
             : `Your rent payment of ₹${payment.amount.toLocaleString(
-                  "en-IN"
-              )} for ${payment.billingMonth} was received successfully.`;
+                "en-IN"
+            )} for ${payment.billingMonth} was received successfully.`;
 
         const titleOwner = isAdvance
             ? "Advance Payment Received"
@@ -323,11 +350,11 @@ const notifyPaymentSuccess = async (
 
         const msgOwner = isAdvance
             ? `Advance payment of ₹${payment.amount.toLocaleString(
-                  "en-IN"
-              )} was received for your property booking.`
+                "en-IN"
+            )} was received for your property booking.`
             : `Rent payment of ₹${payment.amount.toLocaleString(
-                  "en-IN"
-              )} for ${payment.billingMonth} was received from your tenant.`;
+                "en-IN"
+            )} for ${payment.billingMonth} was received from your tenant.`;
 
         await Promise.allSettled([
             notificationService.createNotification({
@@ -430,7 +457,8 @@ const areAllCurrentOccupantsReady = async (
     return true;
 };
 
-const confirmAdvanceRental = async (bookingId: string) => {    const booking = await Booking.findById(bookingId).exec();
+const confirmAdvanceRental = async (bookingId: string) => {
+    const booking = await Booking.findById(bookingId).exec();
 
     if (!booking) throw new AppError(404, "Booking not found");
 
@@ -467,6 +495,10 @@ const confirmAdvanceRental = async (bookingId: string) => {    const booking = a
     }
 
     if (agreement.status === "EXPIRED") {
+        await Booking.updateOne(
+            { _id: booking._id, status: "APPROVED" },
+            { $set: { status: "EXPIRED" } }
+        );
         return { booking, activated: false, expired: true };
     }
 
@@ -482,6 +514,11 @@ const confirmAdvanceRental = async (bookingId: string) => {    const booking = a
         ) {
             agreement.status = "EXPIRED";
             await agreement.save();
+
+            await Booking.updateOne(
+                { _id: booking._id, status: "APPROVED" },
+                { $set: { status: "EXPIRED" } }
+            );
 
             return { booking, activated: false, expired: true };
         }
@@ -611,31 +648,12 @@ const verifyPayment = async (
 
         await payment.save();
 
-        if (payload.type === "ADVANCE") {
-            const result = await confirmAdvanceRental(booking._id.toString());
-
-            if (result.expired) {
-                await notifyLateAdvancePayment(booking);
-            } else {
-                await notifyPaymentSuccess(booking, payment);
-            }
-
-            return {
-                bookingId: booking._id.toString(),
-                paymentStatus: "PAID",
-                bookingStatus: result.booking.status,
-                rentalActivated: result.activated,
-                agreementExpired: result.expired,
-            };
-        }
+        const result = payload.type === "ADVANCE"
+            ? await confirmAdvanceRental(booking._id.toString())
+            : { booking, activated: false, expired: false };
 
         await notifyPaymentSuccess(booking, payment);
-
-        return {
-            bookingId: booking._id.toString(),
-            paymentStatus: "PAID",
-            bookingStatus: booking.status,
-        };
+        return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: result.booking.status };
     }
 
     if (
@@ -682,31 +700,12 @@ const verifyPayment = async (
 
     await payment.save();
 
-    if (payload.type === "ADVANCE") {
-        const result = await confirmAdvanceRental(booking._id.toString());
-
-        if (result.expired) {
-            await notifyLateAdvancePayment(booking);
-        } else {
-            await notifyPaymentSuccess(booking, payment);
-        }
-
-        return {
-            bookingId: booking._id.toString(),
-            paymentStatus: "PAID",
-            bookingStatus: result.booking.status,
-            rentalActivated: result.activated,
-            agreementExpired: result.expired,
-        };
-    }
+    const result = payload.type === "ADVANCE"
+        ? await confirmAdvanceRental(booking._id.toString())
+        : { booking, activated: false, expired: false };
 
     await notifyPaymentSuccess(booking, payment);
-
-    return {
-        bookingId: booking._id.toString(),
-        paymentStatus: "PAID",
-        bookingStatus: booking.status,
-    };
+    return { bookingId: booking._id.toString(), paymentStatus: "PAID", bookingStatus: result.booking.status };
 };
 
 const handleWebhook = async (event: {
@@ -727,7 +726,7 @@ const handleWebhook = async (event: {
 }) => {
     const paymentEntity = event.payload?.payment?.entity;
 
-    if (!paymentEntity) {
+    if (!paymentEntity || !paymentEntity.id) {
         return;
     }
 
@@ -743,10 +742,28 @@ const handleWebhook = async (event: {
         return;
     }
 
-    if (event.event === "payment.failed") {
-        paymentRecord.status = "FAILED";
+    if (event.event === "payment.captured" && paymentEntity.status === "captured") {
+        if (paymentRecord.status === "PAID") {
+            if (paymentRecord.type === "ADVANCE" && paymentRecord.booking) await confirmAdvanceRental(paymentRecord.booking.toString());
+            return;
+        }
+        if (Number(paymentEntity.amount) !== Math.round(paymentRecord.amount * 100) || paymentEntity.currency !== "INR") {
+            throw new AppError(400, "Webhook payment amount or currency mismatch");
+        }
+        paymentRecord.status = "PAID";
+        paymentRecord.razorpayPaymentId = paymentEntity.id;
+        paymentRecord.paidAt = new Date();
+        paymentRecord.referenceId = paymentEntity.id;
         await paymentRecord.save();
-        return;
+        if (paymentRecord.type === "ADVANCE" && paymentRecord.booking) {
+            await confirmAdvanceRental(paymentRecord.booking.toString());
+        }
+        const b = paymentRecord.booking ? await Booking.findById(paymentRecord.booking).exec() : null;
+        if (b) await notifyPaymentSuccess(b, paymentRecord);
+    } else if (event.event === "payment.failed") {
+        paymentRecord.status = "FAILED";
+        paymentRecord.referenceId = paymentEntity.id;
+        await paymentRecord.save();
     }
 
     if (event.event !== "payment.captured") {
@@ -892,6 +909,8 @@ export default {
         });
     },
 
+    createGatewayOrder,
+    confirmAdvanceRental,
     verifyPayment,
     handleWebhook,
     ensureMonthlyRentPayments,
