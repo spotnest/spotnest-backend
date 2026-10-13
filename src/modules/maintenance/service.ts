@@ -6,6 +6,7 @@ import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import repository from "./repository.js";
 import type { CreateMaintenanceInput, ListMaintenanceQuery, UpdateStatusInput } from "./validation.js";
 import type { IMaintenanceImage, IMaintenanceRequest, MaintenanceRequestResponse, MaintenanceStatus } from "./type.js";
+import { DEFAULT_MAINTENANCE_STATUS, normalizePriority } from "./type.js";
 import { UserRole } from "../auth/type.js";
 
 const dateToStr = (date?: Date) => (date ? date.toISOString() : undefined);
@@ -129,12 +130,14 @@ const createRequest = async (
         title: input.title,
         description: input.description,
         category: input.category,
-        priority: input.priority,
+        // Validation canonicalises this already; normalising again keeps the
+        // service safe for callers that build the input themselves.
+        priority: normalizePriority(input.priority) ?? input.priority,
         images: uploadedImages,
-        status: "PENDING",
+        status: DEFAULT_MAINTENANCE_STATUS,
         statusHistory: [
             {
-                newStatus: "PENDING",
+                newStatus: DEFAULT_MAINTENANCE_STATUS,
                 changedBy: tenantObjectId,
                 timestamp: new Date(),
                 note: "Request submitted by tenant",
