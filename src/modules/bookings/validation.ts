@@ -12,5 +12,12 @@ export const reviewBookingSchema = z.object({
     decisionNote: z.string().trim().max(500).optional(),
 });
 
+export const respondInquirySchema = z.object({
+    choice: z.enum(["MOVE_OUT", "EXTEND", "CUSTOM"]),
+    message: z.string().trim().max(1000).optional(),
+});
+
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 export type ReviewBookingInput = z.infer<typeof reviewBookingSchema>;
+export type RespondInquiryInput = z.infer<typeof respondInquirySchema>;
+

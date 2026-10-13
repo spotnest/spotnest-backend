@@ -705,4 +705,501 @@ describe("Rental Lifecycle, Owner Approval, and 2-Minute Deadline Suite", () => 
             await Property.deleteOne({ _id: isolatedProperty._id });
         }
     });
+
+    test("19. Authoritative 72-hour window (259,200,000 ms) is enforced on owner confirmation", async () => {
+        assert.strictEqual(
+            RENTAL_PAYMENT_DEADLINE_MS,
+            72 * 60 * 60 * 1000,
+            "RENTAL_PAYMENT_DEADLINE_MS must equal 72 hours (259,200,000 ms)"
+        );
+
+        const { agreement } = await setupFreshAgreement("PENDING_TENANT");
+        await rentalService.acceptAgreement(agreement._id.toString(), testTenant._id.toString());
+
+        const beforeConfirm = Date.now();
+        const confirmed = await rentalService.confirmAgreement(
+            agreement._id.toString(),
+            testOwner._id.toString()
+        );
+        const afterConfirm = Date.now();
+
+        const deadlineMs = new Date(confirmed.paymentDeadline!).getTime();
+        const minExpected = beforeConfirm + 72 * 60 * 60 * 1000;
+        const maxExpected = afterConfirm + 72 * 60 * 60 * 1000;
+
+        assert.ok(
+            deadlineMs >= minExpected - 2000 && deadlineMs <= maxExpected + 2000,
+            `Deadline (${new Date(deadlineMs).toISOString()}) must be exactly ~72 hours ahead`
+        );
+    });
+
+
+    async function createTestProperty(label: string) {
+        return await Property.create({
+            owner: testOwner._id,
+            title: `Property ${label} ${Date.now()}`,
+            description: "High quality test apartment",
+            propertyType: "apartment",
+            price: 25000,
+            advanceAmount: 25000,
+            rentalTerms: "Standard property rental terms must be at least 20 chars.",
+            bedrooms: 2,
+            bathrooms: 2,
+            address: {
+                street: "123 Test St",
+                city: "Bengaluru",
+                state: "Karnataka",
+                zipCode: "560001",
+                country: "India",
+            },
+            location: {
+                type: "Point",
+                coordinates: [77.5946, 12.9716],
+            },
+        });
+    }
+
+    test("20. Manual rental agreement creation generates Rental, Occupant, and Agreement in PENDING_TENANT state", async () => {
+        const prop = await createTestProperty("20");
+        try {
+            const agreementTerms = "Comprehensive manual rental agreement terms for Spotnest test property.";
+            const manualResult = await rentalService.createManualRentalAgreement(
+                testOwner._id.toString(),
+                {
+                    propertyId: prop._id.toString(),
+                    tenantEmail: testTenant.email,
+                    monthlyRent: 28000,
+                    securityDeposit: 56000,
+                    maintenanceFee: 2500,
+                    noticePeriodDays: 45,
+                    leaseStart: new Date().toISOString(),
+                    leaseEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+                    terms: agreementTerms,
+                    autoSend: false,
+                }
+            );
+
+            assert.ok(manualResult.agreement._id);
+            assert.ok(manualResult.rental._id);
+
+            const createdAgreement = await RentalAgreement.findById(manualResult.agreement._id);
+            assert.ok(createdAgreement);
+            assert.strictEqual(createdAgreement.status, "PENDING_TENANT");
+            assert.strictEqual(createdAgreement.monthlyRent, 28000);
+            assert.strictEqual(createdAgreement.securityDepositShare, 56000);
+            assert.strictEqual(createdAgreement.maintenanceFee, 2500);
+            assert.strictEqual(createdAgreement.noticePeriodDays, 45);
+            assert.strictEqual(createdAgreement.terms, agreementTerms);
+            assert.strictEqual(createdAgreement.version, 1);
+            assert.strictEqual(createdAgreement.deliveryStatus, "PENDING");
+
+            const createdRental = await Rental.findById(manualResult.rental._id);
+            assert.ok(createdRental);
+            assert.strictEqual(createdRental.monthlyRent, 28000);
+            assert.strictEqual(createdRental.securityDeposit, 56000);
+
+            // Cleanup
+            await RentalAgreement.deleteOne({ _id: createdAgreement._id });
+            await RentalOccupant.deleteMany({ rental: createdRental._id });
+            await Rental.deleteOne({ _id: createdRental._id });
+        } finally {
+            await Property.deleteOne({ _id: prop._id });
+        }
+    });
+
+    test("21. listOwnerAgreements and getOwnerAgreementById return populated agreement records", async () => {
+        const prop = await createTestProperty("21");
+        try {
+            const manualResult = await rentalService.createManualRentalAgreement(
+                testOwner._id.toString(),
+                {
+                    propertyId: prop._id.toString(),
+                    tenantEmail: testTenant.email,
+                    monthlyRent: 22000,
+                    securityDeposit: 44000,
+                    leaseStart: new Date().toISOString(),
+                    leaseEnd: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+                    terms: "Standard lease agreement terms for inspection test verification.",
+                    autoSend: false,
+                }
+            );
+
+            const ownerAgreements = await rentalService.listOwnerAgreements(testOwner._id.toString());
+            assert.ok(Array.isArray(ownerAgreements));
+            const found = ownerAgreements.find((a: any) => a._id.toString() === manualResult.agreement._id.toString());
+            assert.ok(found, "Should find the newly created agreement in list");
+            assert.strictEqual(found.monthlyRent, 22000);
+            assert.strictEqual(found.securityDepositShare, 44000);
+
+            const detail = await rentalService.getOwnerAgreementById(
+                manualResult.agreement._id.toString(),
+                testOwner._id.toString()
+            );
+            assert.ok(detail);
+            assert.strictEqual(detail._id.toString(), manualResult.agreement._id.toString());
+            assert.strictEqual(detail.status, "PENDING_TENANT");
+
+            // Cleanup
+            await RentalAgreement.deleteOne({ _id: manualResult.agreement._id });
+            await RentalOccupant.deleteMany({ rental: manualResult.rental._id });
+            await Rental.deleteOne({ _id: manualResult.rental._id });
+        } finally {
+            await Property.deleteOne({ _id: prop._id });
+        }
+    });
+
+    test("22. Agreement update workflow: draft edits in-place; accepted agreement increments version and archives history", async () => {
+        const prop = await createTestProperty("22");
+        try {
+            const manualResult = await rentalService.createManualRentalAgreement(
+                testOwner._id.toString(),
+                {
+                    propertyId: prop._id.toString(),
+                    tenantEmail: testTenant.email,
+                    monthlyRent: 20000,
+                    securityDeposit: 40000,
+                    leaseStart: new Date().toISOString(),
+                    leaseEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+                    terms: "Initial agreement terms before revision for testing purposes.",
+                    autoSend: false,
+                }
+            );
+
+            // Phase 1: Edit unsigned draft in-place
+            const draftUpdate = await rentalService.updateAgreement(
+                manualResult.agreement._id.toString(),
+                testOwner._id.toString(),
+                {
+                    monthlyRent: 21000,
+                    terms: "Updated draft agreement terms with rent increased to 21000.",
+                }
+            );
+            assert.strictEqual(draftUpdate.monthlyRent, 21000);
+            assert.strictEqual(draftUpdate.version, 1, "Draft edit must preserve version 1");
+            assert.strictEqual(draftUpdate.history?.length || 0, 0, "Draft edit should not add history");
+
+            // Phase 2: Tenant accepts agreement
+            await rentalService.acceptAgreement(manualResult.agreement._id.toString(), testTenant._id.toString());
+            const acceptedAgr = await RentalAgreement.findById(manualResult.agreement._id);
+            assert.strictEqual(acceptedAgr!.status, "PENDING_OWNER");
+            assert.ok(acceptedAgr!.tenantAcceptedAt);
+
+            // Phase 3: Owner modifies accepted agreement -> must create Revision v2, reset to PENDING_TENANT
+            const revisionUpdate = await rentalService.updateAgreement(
+                manualResult.agreement._id.toString(),
+                testOwner._id.toString(),
+                {
+                    monthlyRent: 22500,
+                    revisionNote: "Adjusted after tenant discussion",
+                    terms: "Revised agreement terms Version 2 with new terms and clauses.",
+                }
+            );
+
+            assert.strictEqual(revisionUpdate.version, 2, "Version must increment to 2");
+            assert.strictEqual(revisionUpdate.status, "PENDING_TENANT", "Status must reset to PENDING_TENANT");
+            assert.strictEqual(revisionUpdate.tenantAcceptedAt, undefined, "tenantAcceptedAt must be reset");
+            assert.strictEqual(revisionUpdate.history?.length, 1, "History must contain 1 archived revision");
+            assert.strictEqual(revisionUpdate.history![0]?.version, 1);
+            assert.strictEqual(revisionUpdate.history![0]?.monthlyRent, 21000);
+            assert.strictEqual(revisionUpdate.history![0]?.note, "Adjusted after tenant discussion");
+
+            // Cleanup
+            await RentalAgreement.deleteOne({ _id: manualResult.agreement._id });
+            await RentalOccupant.deleteMany({ rental: manualResult.rental._id });
+            await Rental.deleteOne({ _id: manualResult.rental._id });
+        } finally {
+            await Property.deleteOne({ _id: prop._id });
+        }
+    });
+
+    test("23. Deletion rules: Unsigned draft is deleted permanently; accepted agreement is soft-cancelled", async () => {
+        const propA = await createTestProperty("23A");
+        const propB = await createTestProperty("23B");
+
+        try {
+            // Case A: Unsigned draft
+            const draft = await rentalService.createManualRentalAgreement(
+                testOwner._id.toString(),
+                {
+                    propertyId: propA._id.toString(),
+                    tenantEmail: testTenant.email,
+                    monthlyRent: 19000,
+                    securityDeposit: 38000,
+                    leaseStart: new Date().toISOString(),
+                    leaseEnd: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+                    terms: "Draft agreement to test permanent deletion capabilities.",
+                    autoSend: false,
+                }
+            );
+
+            const deleteDraftResult = await rentalService.deleteOrCancelAgreement(
+                draft.agreement._id.toString(),
+                testOwner._id.toString()
+            );
+            assert.strictEqual(deleteDraftResult.deleted, true);
+            const refetchedDraft = await RentalAgreement.findById(draft.agreement._id);
+            assert.strictEqual(refetchedDraft, null, "Draft agreement must be completely removed from DB");
+
+            // Case B: Accepted agreement
+            const accepted = await rentalService.createManualRentalAgreement(
+                testOwner._id.toString(),
+                {
+                    propertyId: propB._id.toString(),
+                    tenantEmail: testTenant.email,
+                    monthlyRent: 19000,
+                    securityDeposit: 38000,
+                    leaseStart: new Date().toISOString(),
+                    leaseEnd: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+                    terms: "Accepted agreement to test soft-cancellation capabilities.",
+                    autoSend: false,
+                }
+            );
+
+            await rentalService.acceptAgreement(accepted.agreement._id.toString(), testTenant._id.toString());
+
+            const cancelResult = await rentalService.deleteOrCancelAgreement(
+                accepted.agreement._id.toString(),
+                testOwner._id.toString()
+            );
+            assert.strictEqual(cancelResult.cancelled, true);
+
+            const refetchedCancelled = await RentalAgreement.findById(accepted.agreement._id);
+            assert.ok(refetchedCancelled);
+            assert.strictEqual(refetchedCancelled.status, "CANCELLED");
+            assert.ok(refetchedCancelled.cancelledAt);
+            assert.strictEqual(refetchedCancelled.cancelledBy?.toString(), testOwner._id.toString());
+
+            // Cleanup
+            await RentalAgreement.deleteOne({ _id: accepted.agreement._id });
+            await RentalOccupant.deleteMany({ rental: accepted.rental._id });
+            await Rental.deleteOne({ _id: accepted.rental._id });
+        } finally {
+            await Property.deleteOne({ _id: propA._id });
+            await Property.deleteOne({ _id: propB._id });
+        }
+    });
+
+    test("24. Active rental agreement cannot be edited in place (rejects with 400)", async () => {
+        const { agreement } = await setupFreshAgreement("PENDING_TENANT");
+        agreement.status = "ACTIVE";
+        agreement.advancePaidAt = new Date();
+        await agreement.save();
+
+        await assert.rejects(
+            async () => {
+                await rentalService.updateAgreement(
+                    agreement._id.toString(),
+                    testOwner._id.toString(),
+                    {
+                        monthlyRent: 35000,
+                        terms: "Attempting to edit already active lease agreement terms.",
+                    }
+                );
+            },
+            (err: any) => {
+                assert.strictEqual(err.statusCode, 400);
+                assert.match(err.message, /Active agreements with paid advances cannot be edited in place/);
+                return true;
+            }
+        );
+    });
+
+    test("25. Lease termination demotes tenant to USER role if no other active tenancies exist", async () => {
+        const singleUseTenant = await User.create({
+            name: "Single Use Tenant",
+            email: `single_tenant_${Date.now()}@test.spotnest.com`,
+            password_hash: "hashed_pwd",
+            role: UserRole.TENANT,
+            status: UserStatus.ACTIVE,
+        });
+
+        try {
+            const booking = await Booking.create({
+                propertyId: testProperty._id,
+                userId: singleUseTenant._id,
+                ownerId: testOwner._id,
+                startDate: new Date(),
+                endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                monthlyRent: 25000,
+                advanceAmount: 25000,
+                status: "APPROVED",
+                paymentStatus: "PAID",
+            });
+
+            const rental = await Rental.create({
+                booking: booking._id,
+                property: testProperty._id,
+                owner: testOwner._id,
+                tenant: singleUseTenant._id,
+                monthlyRent: 25000,
+                securityDeposit: 25000,
+                leaseStart: booking.startDate,
+                leaseEnd: booking.endDate,
+                paymentFrequency: "monthly",
+                status: "active",
+            });
+
+            const occupant = await RentalOccupant.create({
+                rental: rental._id,
+                tenant: singleUseTenant._id,
+                rentAmount: 25000,
+                securityDepositShare: 25000,
+                status: "ACTIVE",
+            });
+
+            const agreement = await RentalAgreement.create({
+                rental: rental._id,
+                occupant: occupant._id,
+                tenant: singleUseTenant._id,
+                owner: testOwner._id,
+                property: testProperty._id,
+                monthlyRent: 25000,
+                securityDepositShare: 25000,
+                leaseStart: booking.startDate,
+                leaseEnd: booking.endDate,
+                terms: "Agreement terms for testing",
+                status: "ACTIVE",
+                advancePaidAt: new Date(),
+            });
+
+            // Terminate rental
+            await rentalService.terminateRental(rental._id.toString(), testOwner._id.toString());
+
+            // Verify tenant was demoted to USER role
+            const updatedUser = await User.findById(singleUseTenant._id);
+            assert.strictEqual(updatedUser!.role, UserRole.USER);
+
+            // Cleanup
+            await RentalAgreement.deleteOne({ _id: agreement._id });
+            await RentalOccupant.deleteOne({ _id: occupant._id });
+            await Rental.deleteOne({ _id: rental._id });
+            await Booking.deleteOne({ _id: booking._id });
+        } finally {
+            await User.deleteOne({ _id: singleUseTenant._id });
+        }
+    });
+
+    test("26. formatAgreementTerms dynamically replaces stale rent/deposit amounts", async () => {
+        const staleTerms = `STANDARD RESIDENTIAL LEASE AGREEMENT
+1. PURPOSE & PREMISES: The Owner agrees to lease...
+2. MONTHLY RENT: The Tenant agrees to pay the monthly rent of ₹3,323 on or before the 5th day of every calendar month.
+3. SECURITY DEPOSIT / ADVANCE: A refundable security deposit of ₹6,646 must be paid prior to move-in.`;
+
+        const formatted = rentalService.formatAgreementTerms(
+            staleTerms,
+            3401,
+            6802,
+            "Ocean View Villa"
+        );
+
+        assert.ok(formatted.includes("₹3,401"));
+        assert.ok(formatted.includes("₹6,802"));
+        assert.ok(!formatted.includes("₹3,323"));
+        assert.ok(!formatted.includes("₹6,646"));
+    });
+
+    test("27. Occupied property rejects overlapping dates and triggers 3-day tenant extension inquiry for subsequent dates", async () => {
+        const prop = await createTestProperty("27");
+
+        // Create an active rental for prop with testTenant
+        const activeRental = await Rental.create({
+            property: prop._id,
+            owner: testOwner._id,
+            tenant: testTenant._id,
+            monthlyRent: 25000,
+            securityDeposit: 50000,
+            leaseStart: new Date(),
+            leaseEnd: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+            status: "active",
+        });
+
+        // Another applicant (applicantUser) requests to rent the property
+        const applicantUser = await User.create({
+            name: "Applicant Tenant",
+            email: `applicant_${Date.now()}@example.com`,
+            password_hash: "hashed_pwd",
+            role: UserRole.USER,
+            status: UserStatus.ACTIVE,
+            isBlock: false,
+        });
+
+        try {
+            // Case A: Applicant requests date starting during existing lease -> MUST REJECT (400)
+            const overlappingStart = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+            const overlappingEnd = new Date(Date.now() + 240 * 24 * 60 * 60 * 1000);
+
+            await assert.rejects(
+                async () => {
+                    await bookingService.createBooking(applicantUser._id.toString(), {
+                        propertyId: prop._id.toString(),
+                        startDate: overlappingStart,
+                        endDate: overlappingEnd,
+                        notes: "Attempting to book during current occupancy",
+                    });
+                },
+                (err: any) => {
+                    assert.strictEqual(err.statusCode, 400);
+                    assert.match(err.message, /This property is currently occupied until/);
+                    return true;
+                }
+            );
+
+            // Case B: Applicant requests starting AFTER current lease ends -> Allowed, triggers 3-day inquiry
+            const validStart = new Date(Date.now() + 190 * 24 * 60 * 60 * 1000);
+            const validEnd = new Date(Date.now() + 370 * 24 * 60 * 60 * 1000);
+
+            const newBooking = await bookingService.createBooking(applicantUser._id.toString(), {
+                propertyId: prop._id.toString(),
+                startDate: validStart,
+                endDate: validEnd,
+                notes: "Requesting from lease end date",
+            });
+
+            // Verify tenant inquiry was created
+            assert.ok(newBooking.tenantInquiry);
+            assert.strictEqual(newBooking.tenantInquiry.status, "PENDING");
+            assert.strictEqual(newBooking.tenantInquiry.currentTenantId.toString(), testTenant._id.toString());
+            assert.ok(newBooking.tenantInquiry.deadline);
+
+            // Owner cannot approve while inquiry is pending
+            await assert.rejects(
+                async () => {
+                    await bookingService.reviewBooking(
+                        newBooking._id.toString(),
+                        testOwner._id.toString(),
+                        { decision: "APPROVED" }
+                    );
+                },
+                (err: any) => {
+                    assert.strictEqual(err.statusCode, 409);
+                    assert.match(err.message, /Waiting for the current tenant to respond/);
+                    return true;
+                }
+            );
+
+            // Current tenant responds to the inquiry with MOVE_OUT
+            const updatedBooking = await bookingService.respondToTenantInquiry(
+                newBooking._id.toString(),
+                testTenant._id.toString(),
+                { choice: "MOVE_OUT" }
+            );
+
+            assert.strictEqual(updatedBooking.tenantInquiry!.status, "ACCEPTED_MOVE_OUT");
+            assert.ok(updatedBooking.tenantInquiry!.responseMessage?.includes("I will end the rent"));
+
+            // Owner can now approve the booking!
+            const approved = await bookingService.reviewBooking(
+                newBooking._id.toString(),
+                testOwner._id.toString(),
+                { decision: "APPROVED" }
+            );
+
+            assert.strictEqual(approved.status, "APPROVED");
+        } finally {
+            await Rental.deleteOne({ _id: activeRental._id });
+            await Booking.deleteMany({ userId: applicantUser._id });
+            await User.deleteOne({ _id: applicantUser._id });
+            await Property.deleteOne({ _id: prop._id });
+        }
+    });
 });

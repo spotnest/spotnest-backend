@@ -56,6 +56,35 @@ const bookingSchema = new Schema<IBooking>(
         approvedAt: { type: Date },
         rejectedAt: { type: Date },
         confirmedAt: { type: Date },
+        tenantInquiry: {
+            currentTenantId: {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+            },
+            currentRentalId: {
+                type: Schema.Types.ObjectId,
+                ref: "Rental",
+            },
+            status: {
+                type: String,
+                enum: [
+                    "PENDING",
+                    "ACCEPTED_MOVE_OUT",
+                    "WANTS_EXTENSION",
+                    "CUSTOM_MESSAGE",
+                    "EXPIRED_DEEMED_CONSENT",
+                ],
+            },
+            deadline: { type: Date },
+            question: { type: String },
+            respondedAt: { type: Date },
+            responseChoice: {
+                type: String,
+                enum: ["MOVE_OUT", "EXTEND", "CUSTOM"],
+            },
+            responseMessage: { type: String, maxlength: 1000 },
+            deemedConsentApplied: { type: Boolean, default: false },
+        },
     },
     {
         timestamps: { createdAt: "created_at", updatedAt: "updated_at" },

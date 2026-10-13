@@ -4,8 +4,10 @@ import service from "./service.js";
 import {
     acceptAgreementSchema,
     confirmAgreementSchema,
+    createManualAgreementSchema,
     setRentSplitSchema,
     terminateRentalSchema,
+    updateAgreementSchema,
     updateOwnerRentalTermsSchema,
 } from "./validation.js";
 
@@ -120,6 +122,74 @@ const updateOwnerRentalTerms = async (
         data: result,
     });
 };
+const createManualAgreement = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const payload = createManualAgreementSchema.parse(req.body);
+    const result = await service.createManualRentalAgreement(ownerId, payload);
+    res.status(201).json({
+        success: true,
+        message: "Rental agreement created successfully",
+        data: result,
+    });
+};
+
+const listOwnerAgreements = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const agreements = await service.listOwnerAgreements(ownerId);
+    res.json({ success: true, data: agreements });
+};
+
+const getOwnerAgreement = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const agreementId = req.params.agreementId as string;
+    const agreement = await service.getOwnerAgreementById(agreementId, ownerId);
+    res.json({ success: true, data: agreement });
+};
+
+const updateAgreement = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const agreementId = req.params.agreementId as string;
+    const payload = updateAgreementSchema.parse(req.body);
+    const agreement = await service.updateAgreement(agreementId, ownerId, payload);
+    res.json({
+        success: true,
+        message: "Agreement updated successfully",
+        data: agreement,
+    });
+};
+
+const deleteOrCancelAgreement = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const agreementId = req.params.agreementId as string;
+    const result = await service.deleteOrCancelAgreement(agreementId, ownerId);
+    res.json({
+        success: true,
+        message: result.message,
+        data: result,
+    });
+};
+
+const resendAgreement = async (req: AuthRequest, res: Response) => {
+    const ownerId = req.user!.id;
+    const agreementId = req.params.agreementId as string;
+    const result = await service.resendAgreementNotification(agreementId, ownerId);
+    res.json({
+        success: true,
+        message: result.message,
+        data: result,
+    });
+};
+
+const lookupTenant = async (req: AuthRequest, res: Response) => {
+    const email = req.query.email as string;
+    if (!email) {
+        res.json({ success: true, data: null });
+        return;
+    }
+    const tenant = await service.lookupTenantByEmail(email);
+    res.json({ success: true, data: tenant });
+};
+
 export default {
     getMyRental,
     getAgreement,
@@ -130,4 +200,11 @@ export default {
     terminateRental,
     getOwnerRentalTerms,
     updateOwnerRentalTerms,
+    createManualAgreement,
+    listOwnerAgreements,
+    getOwnerAgreement,
+    updateAgreement,
+    deleteOrCancelAgreement,
+    resendAgreement,
+    lookupTenant,
 };

@@ -71,3 +71,23 @@ export const reviewBooking = async (req: AuthRequest, res: Response, next: NextF
         next(error);
     }
 };
+
+export const respondToTenantInquiry = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { respondInquirySchema } = await import("./validation.js");
+        const input = respondInquirySchema.parse(req.body);
+        const booking = await bookingService.respondToTenantInquiry(
+            req.params.id as string,
+            req.user!.id,
+            input
+        );
+        res.status(200).json({ success: true, data: booking });
+    } catch (error) {
+        next(error);
+    }
+};
+

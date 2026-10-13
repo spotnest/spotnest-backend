@@ -23,7 +23,18 @@ export type AgreementStatus =
     | "ACTIVE"
     | "REJECTED"
     | "TERMINATED"
-    | "EXPIRED";
+    | "EXPIRED"
+    | "CANCELLED";
+
+export interface IAgreementRevision {
+    version: number;
+    terms: string;
+    monthlyRent: number;
+    securityDepositShare: number;
+    modifiedAt: Date;
+    modifiedBy: Types.ObjectId;
+    note?: string;
+}
 
 export interface IRentalAgreement extends Document {
     _id: Types.ObjectId;
@@ -34,14 +45,23 @@ export interface IRentalAgreement extends Document {
     property: Types.ObjectId;
     monthlyRent: number;
     securityDepositShare: number;
+    maintenanceFee?: number | null;
+    paymentFrequency?: string | null;
+    noticePeriodDays?: number | null;
     leaseStart: Date;
     leaseEnd: Date;
     terms: string;
     status: AgreementStatus;
-    tenantAcceptedAt?: Date;
-    ownerAcceptedAt?: Date;
-    paymentDeadline?: Date;
-    advancePaidAt?: Date;
+    tenantAcceptedAt?: Date | null;
+    ownerAcceptedAt?: Date | null;
+    paymentDeadline?: Date | null;
+    advancePaidAt?: Date | null;
+    version?: number | null;
+    deliveryStatus?: "PENDING" | "DELIVERED" | "FAILED" | null;
+    deliveryError?: string | null;
+    cancelledAt?: Date | null;
+    cancelledBy?: Types.ObjectId | null;
+    history?: IAgreementRevision[];
     created_at: Date;
     updated_at: Date;
 }

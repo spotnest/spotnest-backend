@@ -10,6 +10,7 @@ import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
 import { emitDashboardUpdate } from "../../shared/socket/index.js";
 import subscriptionService from "../subscriptions/service.js";
+import { Rental } from "../dashboard/tenantDashboard/model.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
@@ -176,7 +177,22 @@ const getPublicPropertyById = async (id: string): Promise<PublicProperty> => {
     if (!property || property.status !== "active") {
         throw new AppError(404, "Property not found");
     }
-    return property;
+
+    const activeRental = await Rental.findOne({
+        property: property._id,
+        status: "active",
+    }).select("leaseEnd");
+
+    const propertyObj: any = (property as any).toObject ? (property as any).toObject() : { ...property };
+    if (activeRental && activeRental.leaseEnd) {
+        propertyObj.isOccupied = true;
+        propertyObj.occupiedUntil = activeRental.leaseEnd;
+    } else {
+        propertyObj.isOccupied = false;
+        propertyObj.occupiedUntil = null;
+    }
+
+    return propertyObj;
 };
 
 const listOwnerProperties = async (ownerId: string): Promise<IProperty[]> => {

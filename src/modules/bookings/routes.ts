@@ -10,6 +10,7 @@ router.post("/", protect, bookingController.createBooking);
 router.get("/mine", protect, bookingController.listMyBookings);
 router.get("/owner/requests", protect, requireRole(UserRole.OWNER), bookingController.listOwnerRequests);
 router.patch("/:id/review", protect, requireRole(UserRole.OWNER), bookingController.reviewBooking);
+router.post("/:id/inquiry-response", protect, bookingController.respondToTenantInquiry);
 router.get("/:id", protect, bookingController.getBooking);
 
 export default router;

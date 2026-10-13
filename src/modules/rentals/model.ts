@@ -119,6 +119,7 @@ const rentalAgreementSchema = new Schema<IRentalAgreement>(
                 "REJECTED",
                 "TERMINATED",
                 "EXPIRED",
+                "CANCELLED",
             ],
             default: "PENDING_TENANT",
             index: true,
@@ -136,6 +137,48 @@ const rentalAgreementSchema = new Schema<IRentalAgreement>(
         advancePaidAt: {
             type: Date,
         },
+        version: {
+            type: Number,
+            default: 1,
+        },
+        maintenanceFee: {
+            type: Number,
+            default: 0,
+        },
+        paymentFrequency: {
+            type: String,
+            default: "monthly",
+        },
+        noticePeriodDays: {
+            type: Number,
+            default: 30,
+        },
+        deliveryStatus: {
+            type: String,
+            enum: ["PENDING", "DELIVERED", "FAILED"],
+            default: "DELIVERED",
+        },
+        deliveryError: {
+            type: String,
+        },
+        cancelledAt: {
+            type: Date,
+        },
+        cancelledBy: {
+            type: Schema.Types.ObjectId,
+            ref: "User",
+        },
+        history: [
+            {
+                version: { type: Number, required: true },
+                terms: { type: String, required: true },
+                monthlyRent: { type: Number, required: true },
+                securityDepositShare: { type: Number, required: true },
+                modifiedAt: { type: Date, default: Date.now },
+                modifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
+                note: { type: String },
+            },
+        ],
     },
     {
         timestamps: {

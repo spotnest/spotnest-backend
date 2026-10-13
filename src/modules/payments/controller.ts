@@ -4,6 +4,9 @@ import { AppError } from "../../shared/errors/AppError.js";
 import paymentService from "./service.js";
 import { createAdvanceOrderSchema, createMonthlyRentOrderSchema, verifyPaymentSchema } from "./validation.js";
 import { verifyWebhookSignature } from "./razorpay.js";
+import authRepository from "../auth/repository.js";
+import { toAuthResponse } from "../../shared/utils/token.js";
+import { setAuthCookies } from "../auth/controller.js";
 
 export const createAdvanceOrder = async (
     req: AuthRequest,
@@ -32,7 +35,6 @@ export const createMonthlyRentOrder = async (req: AuthRequest, res: Response, ne
         next(error);
     }
 };
-
 export const verifyPayment = async (
     req: AuthRequest,
     res: Response,
@@ -42,10 +44,23 @@ export const verifyPayment = async (
         const payload = verifyPaymentSchema.parse(req.body);
         const result = await paymentService.verifyPayment(payload, req.user!.id);
 
+        let userResponse = null;
+        if (payload.type === "ADVANCE") {
+            const updatedUser = await authRepository.findById(req.user!.id);
+            if (updatedUser) {
+                const authResp = toAuthResponse(updatedUser);
+                setAuthCookies(res, authResp.token, authResp.refreshToken);
+                userResponse = authResp.user;
+            }
+        }
+
         res.status(200).json({
             success: true,
             message: "Payment verified successfully",
-            data: result,
+            data: {
+                ...result,
+                ...(userResponse ? { user: userResponse } : {}),
+            },
         });
     } catch (error) {
         next(error);

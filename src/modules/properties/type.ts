@@ -64,6 +64,8 @@ export interface PublicPropertyOwner {
 
 export type PublicProperty = Omit<IProperty, "owner"> & {
     owner: PublicPropertyOwner | null;
+    isOccupied?: boolean;
+    occupiedUntil?: Date | string | null;
 };
 
 export interface AdminPropertyOwner {

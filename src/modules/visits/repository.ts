@@ -44,6 +44,8 @@ const findByOwner = async (
     owner: string
 ): Promise<IVisit[]> => {
     return Visit.find({ owner })
+        .populate("property", "title price address images")
+        .populate("requester", "name email phone image")
         .sort({ created_at: -1 });
 };
 
