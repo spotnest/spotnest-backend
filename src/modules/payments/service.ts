@@ -136,7 +136,10 @@ const createGatewayOrder = async (input: {
             );
         }
 
-        if (booking.endDate < new Date()) {
+        const threeDaysAfterEnd = new Date(
+            booking.endDate.getTime() + 3 * 24 * 60 * 60 * 1000
+        );
+        if (new Date() > threeDaysAfterEnd) {
             throw new AppError(409, "Rental period has ended");
         }
 
@@ -174,9 +177,31 @@ const createGatewayOrder = async (input: {
             throw new AppError(409, "This rent installment is not due yet");
         }
 
-        if (occupant) {
-            payAmount = occupant.rentAmount;
+        let baseRent = occupant ? occupant.rentAmount : booking.monthlyRent;
+        let lateFee = 0;
+
+        if (existingForCycle) {
+            if (existingForCycle.dueDate) {
+                const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+                const dueDay = new Date(Date.UTC(existingForCycle.dueDate.getUTCFullYear(), existingForCycle.dueDate.getUTCMonth(), existingForCycle.dueDate.getUTCDate()));
+                if (today > dueDay) {
+                    const overdueDays = Math.floor((today.getTime() - dueDay.getTime()) / (24 * 60 * 60 * 1000));
+                    lateFee = overdueDays * 50;
+                    if (existingForCycle.lateFee !== lateFee) {
+                        existingForCycle.lateFee = lateFee;
+                        existingForCycle.status = "OVERDUE";
+                        existingForCycle.lateFeeReason = `Late payment fee: ₹50/day (${overdueDays} ${overdueDays === 1 ? "day" : "days"} overdue)`;
+                        await existingForCycle.save();
+                    }
+                } else {
+                    lateFee = existingForCycle.lateFee || 0;
+                }
+            } else {
+                lateFee = existingForCycle.lateFee || 0;
+            }
         }
+
+        payAmount = baseRent + lateFee;
     }
 
     const amountInPaise = Math.round(payAmount * 100);
@@ -907,6 +932,82 @@ export default {
             amount: booking.monthlyRent,
             billingMonth,
         });
+    },
+
+    getAdminPayments: async (options: {
+        page?: number;
+        limit?: number;
+        type?: string;
+        status?: string;
+        search?: string;
+    }) => {
+        const page = Math.max(1, Number(options.page) || 1);
+        const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+        const skip = (page - 1) * limit;
+
+        const filter: Record<string, unknown> = {};
+        if (options.type && options.type !== "all") {
+            filter.type = options.type;
+        }
+        if (options.status && options.status !== "all") {
+            filter.status = { $regex: new RegExp(`^${options.status}$`, "i") };
+        }
+
+        const [payments, total, totalsAgg] = await Promise.all([
+            Payment.find(filter)
+                .populate("tenant", "name email phone image")
+                .populate("owner", "name email phone image")
+                .populate("property", "title address images price")
+                .populate("rental", "status leaseStart leaseEnd monthlyRent")
+                .sort({ created_at: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Payment.countDocuments(filter),
+            Payment.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalPaid: {
+                            $sum: {
+                                $cond: [{ $in: ["$status", ["PAID", "paid"]] }, "$amount", 0],
+                            },
+                        },
+                        totalLateFees: {
+                            $sum: { $ifNull: ["$lateFee", 0] },
+                        },
+                        paidCount: {
+                            $sum: {
+                                $cond: [{ $in: ["$status", ["PAID", "paid"]] }, 1, 0],
+                            },
+                        },
+                        overdueCount: {
+                            $sum: {
+                                $cond: [{ $in: ["$status", ["OVERDUE", "overdue"]] }, 1, 0],
+                            },
+                        },
+                    },
+                },
+            ]),
+        ]);
+
+        const summary = totalsAgg[0] || {
+            totalPaid: 0,
+            totalLateFees: 0,
+            paidCount: 0,
+            overdueCount: 0,
+        };
+
+        return {
+            payments,
+            summary,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit),
+            },
+        };
     },
 
     createGatewayOrder,

@@ -15,6 +15,8 @@ import {
     updateProfileSchema,
     changePasswordSchema,
     updateLocationSchema,
+    adminListUsersQuerySchema,
+    adminUpdateUserSchema,
 } from "./validation.js";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -255,17 +257,71 @@ const resetPassword = async (
 };
 
 const listUsers = async (
-    _req: AuthRequest,
+    req: AuthRequest,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        const result = await authService.listUsers();
+        const query = adminListUsersQuerySchema.parse(req.query);
+        const result = await authService.listUsers(query);
+        if (Array.isArray(result)) {
+            res.status(200).json({ success: true, data: result });
+        } else {
+            res.status(200).json({
+                success: true,
+                data: result.users,
+                pagination: result.pagination,
+            });
+        }
+    } catch (err) {
+        next(err);
+    }
+};
+
+const getUserDetails = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const userId = String(req.params.userId);
+        const result = await authService.adminGetUserDetails(userId);
         res.status(200).json({ success: true, data: result });
     } catch (err) {
         next(err);
     }
 };
+
+const updateUser = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const userId = String(req.params.userId);
+        const data = adminUpdateUserSchema.parse(req.body);
+        const result = await authService.adminUpdateUser(userId, data);
+        res.status(200).json({ success: true, data: result, message: "User updated successfully" });
+    } catch (err) {
+        next(err);
+    }
+};
+
+const deleteUser = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const userId = String(req.params.userId);
+        const result = await authService.adminDeleteUser(userId);
+        res.status(200).json({ success: true, message: result.message });
+    } catch (err) {
+        next(err);
+    }
+};
+
+
 
 const logout = async (
     req: Request,
@@ -447,6 +503,9 @@ const authController = {
     forgotPassword,
     resetPassword,
     listUsers,
+    getUserDetails,
+    updateUser,
+    deleteUser,
     logout,
     updateProfile,
     updateLocation,

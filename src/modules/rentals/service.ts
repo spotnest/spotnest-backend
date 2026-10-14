@@ -306,12 +306,29 @@ const getTenantRental = async (
             .sort({ created_at: -1 });
 
         if (!occupant || !occupant.rental) {
-            return null;
-        }
+            const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+            const recentOccupant = await RentalOccupant.findOne({
+                tenant: tenantId,
+            })
+                .populate({
+                    path: "rental",
+                    match: { leaseEnd: { $gte: threeDaysAgo } },
+                })
+                .sort({ created_at: -1 });
 
-        rental = await repository.findRentalById(
-            occupant.rental._id.toString()
-        );
+            if (recentOccupant && recentOccupant.rental) {
+                occupant = recentOccupant;
+                rental = await repository.findRentalById(
+                    (occupant.rental as any)._id.toString()
+                );
+            } else {
+                return null;
+            }
+        } else {
+            rental = await repository.findRentalById(
+                occupant.rental._id.toString()
+            );
+        }
     }
 
     if (!rental) {
@@ -1814,6 +1831,161 @@ const lookupTenantByEmail = async (email: string) => {
     };
 };
 
+const getAdminRentals = async (options: {
+    page?: number;
+    limit?: number;
+    status?: string;
+}) => {
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, unknown> = {};
+    if (options.status) {
+        filter.status = options.status;
+    }
+
+    const [rentals, total] = await Promise.all([
+        Rental.find(filter)
+            .populate("property", "title address images price rentalStatus")
+            .populate("tenant", "name email phone image")
+            .populate("owner", "name email phone image")
+            .populate("booking", "status checkIn checkOut paymentDeadline advancePaymentRequired")
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Rental.countDocuments(filter),
+    ]);
+
+    const enhanced = await Promise.all(
+        rentals.map(async (rental: any) => {
+            const agreement = await RentalAgreement.findOne({ rental: rental._id })
+                .sort({ version: -1, created_at: -1 })
+                .lean();
+
+            const now = new Date();
+            const leaseEnd = rental.leaseEnd ? new Date(rental.leaseEnd) : null;
+            const gracePeriodEnd = leaseEnd ? new Date(leaseEnd.getTime() + 3 * 24 * 60 * 60 * 1000) : null;
+            const isGracePeriodActive = Boolean(
+                leaseEnd && now > leaseEnd && gracePeriodEnd && now <= gracePeriodEnd
+            );
+
+            const rentalIdStr = rental._id ? rental._id.toString() : "";
+            return {
+                ...rental,
+                id: rentalIdStr,
+                _id: rentalIdStr,
+                agreement: agreement
+                    ? {
+                          id: agreement._id.toString(),
+                          status: agreement.status,
+                          tenantAcceptedAt: agreement.tenantAcceptedAt,
+                          ownerAcceptedAt: agreement.ownerAcceptedAt,
+                          paymentDeadline: agreement.paymentDeadline,
+                          terms: agreement.terms,
+                          version: agreement.version,
+                      }
+                    : null,
+                isGracePeriodActive,
+                gracePeriodEnd: gracePeriodEnd ? gracePeriodEnd.toISOString() : null,
+            };
+        })
+    );
+
+    return {
+        rentals: enhanced,
+        pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit),
+        },
+    };
+};
+
+const adminTerminateRental = async (rentalId: string, reason?: string) => {
+    const rental = await Rental.findById(rentalId);
+    if (!rental) {
+        throw new AppError(404, "Rental not found");
+    }
+
+    rental.status = "ended";
+    await rental.save();
+
+    if (rental.booking) {
+        await Booking.updateOne(
+            { _id: rental.booking },
+            { $set: { status: "COMPLETED" } }
+        );
+    }
+
+    const now = new Date();
+    await RentalOccupant.updateMany(
+        { rental: rental._id, status: { $ne: "TERMINATED" } },
+        { $set: { status: "TERMINATED", leftAt: now } }
+    );
+
+    await RentalAgreement.updateMany(
+        { rental: rental._id, status: { $ne: "TERMINATED" } },
+        { $set: { status: "TERMINATED", rejectionReason: reason ?? "Terminated by administrator" } }
+    );
+
+    if (rental.property) {
+        await Property.updateOne(
+            { _id: rental.property },
+            { $set: { rentalStatus: "available" } }
+        );
+    }
+
+    const occupants = await RentalOccupant.find({ rental: rental._id });
+    const tenantIds = [...new Set(occupants.map((o) => o.tenant.toString()))];
+
+    for (const tenantId of tenantIds) {
+        const otherActiveOccupancies = await RentalOccupant.countDocuments({
+            tenant: tenantId,
+            rental: { $ne: rental._id },
+            status: { $in: ["ACTIVE", "PENDING"] },
+        });
+        const otherActiveRentals = await Rental.countDocuments({
+            tenant: tenantId,
+            _id: { $ne: rental._id },
+            status: { $in: ["active", "scheduled"] },
+        });
+
+        if (otherActiveOccupancies === 0 && otherActiveRentals === 0) {
+            await User.updateOne(
+                { _id: tenantId, role: UserRole.TENANT },
+                { $set: { role: UserRole.USER } }
+            );
+        }
+
+        await notificationService.notify({
+            recipient: tenantId,
+            title: "Rental terminated by Administrator",
+            message: reason ? `Your rental was terminated: ${reason}` : "Your rental was terminated by administrator.",
+            type: "rental_rejected",
+            referenceId: rental._id.toString(),
+            referenceType: "property",
+        });
+    }
+
+    if (rental.owner) {
+        await notificationService.notify({
+            recipient: rental.owner.toString(),
+            title: "Rental terminated by Administrator",
+            message: reason ? `Rental on your property was terminated: ${reason}` : "Rental was terminated by administrator.",
+            type: "rental_status",
+            referenceId: rental._id.toString(),
+            referenceType: "property",
+        });
+    }
+
+    emitDashboardUpdate({ userIds: [rental.owner.toString(), ...tenantIds], admins: true }, "rental", "status_changed", rental._id.toString());
+
+    return { message: "Rental terminated successfully by administrator" };
+};
+
 export default {
     createDefaultOccupantAndAgreement,
     getTenantRental,
@@ -1833,4 +2005,7 @@ export default {
     resendAgreementNotification,
     lookupTenantByEmail,
     formatAgreementTerms,
+    getAdminRentals,
+    adminTerminateRental,
 };
+

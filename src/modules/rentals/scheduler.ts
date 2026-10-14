@@ -8,6 +8,7 @@ import {
     RentalAgreement,
     RentalOccupant,
 } from "./model.js";
+import { sendLeaseEndingReminderEmail } from "../../shared/utils/email.js";
 
 import type { IRental } from "../dashboard/tenantDashboard/type.js";
 
@@ -135,12 +136,14 @@ const getReminderDetails = (
         diffDays < 0 &&
         paymentStatus === "OVERDUE"
     ) {
+        const overdueDays = Math.max(1, -diffDays);
+        const lateFee = overdueDays * 50;
         return {
             stage: "OVERDUE",
             title: "Rent Overdue Alert",
             message:
-                `Your monthly rent of ₹${formattedAmount} ` +
-                `for ${billingMonth} is overdue. ` +
+                `Your monthly rent of ₹${formattedAmount} for ${billingMonth} is overdue by ${overdueDays} ${overdueDays === 1 ? "day" : "days"}. ` +
+                `A late fee of ₹50/day (total fine: ₹${lateFee.toLocaleString("en-IN")}) has been added. ` +
                 "Please make your payment promptly.",
         };
     }
@@ -639,73 +642,163 @@ const activateEligibleScheduledRentals = async (
 // ============================================================
 
 /**
- * Changes overdue monthly rent from PENDING to OVERDUE.
- * Notifications and dashboard updates happen only when the
- * conditional update actually changes the payment.
+ * Changes overdue monthly rent from PENDING to OVERDUE and adds a ₹50/day fine
+ * for each day starting from the day after the due date.
  */
 const processOverduePayments = async (
     today: Date
 ): Promise<void> => {
     const payments = await Payment.find({
         type: "MONTHLY_RENT",
-        status: "PENDING",
+        status: {
+            $in: ["PENDING", "OVERDUE", "DUE"],
+        },
         dueDate: {
             $lt: today,
         },
     }).lean();
 
     for (const payment of payments) {
-        const transition = await Payment.updateOne(
-            {
-                _id: payment._id,
-                status: "PENDING",
-            },
-            {
-                $set: {
-                    status: "OVERDUE",
-                },
+        if (!payment.dueDate) continue;
+
+        const dueDay = startOfUtcDay(new Date(payment.dueDate));
+        const overdueDays = Math.max(0, Math.floor((today.getTime() - dueDay.getTime()) / DAY_MS));
+        const lateFee = overdueDays * 50;
+        const lateFeeReason =
+            overdueDays > 0
+                ? `Late payment fee: ₹50/day (${overdueDays} ${overdueDays === 1 ? "day" : "days"} overdue)`
+                : undefined;
+
+        const wasPending = payment.status === "PENDING";
+        const lateFeeChanged = payment.lateFee !== lateFee;
+
+        if (wasPending || lateFeeChanged) {
+            await Payment.updateOne(
+                { _id: payment._id },
+                {
+                    $set: {
+                        status: "OVERDUE",
+                        lateFee,
+                        ...(lateFeeReason ? { lateFeeReason } : {}),
+                    },
+                }
+            );
+        }
+
+        if (wasPending) {
+            if (payment.owner) {
+                await notificationService.notify({
+                    recipient: payment.owner.toString(),
+                    title: "Rent overdue",
+                    message:
+                        `Rent of ${formatInr(payment.amount)} ` +
+                        `for ${payment.billingMonth} is overdue.`,
+                    type: "rent_due",
+                    referenceId: payment._id.toString(),
+                    referenceType: "payment",
+                    data: {
+                        paymentId: payment._id.toString(),
+                        ...(payment.rental
+                            ? {
+                                rentalId: payment.rental.toString(),
+                            }
+                            : {}),
+                    },
+                    dedupeKey:
+                        `rent-overdue-owner:${payment._id.toString()}`,
+                });
             }
-        );
 
-        if (transition.modifiedCount === 0) {
-            continue;
-        }
-
-        if (payment.owner) {
-            await notificationService.notify({
-                recipient: payment.owner.toString(),
-                title: "Rent overdue",
-                message:
-                    `Rent of ${formatInr(payment.amount)} ` +
-                    `for ${payment.billingMonth} is overdue.`,
-                type: "rent_due",
-                referenceId: payment._id.toString(),
-                referenceType: "payment",
-                data: {
-                    paymentId: payment._id.toString(),
-                    ...(payment.rental
-                        ? {
-                            rentalId: payment.rental.toString(),
-                        }
-                        : {}),
+            emitDashboardUpdate(
+                {
+                    userIds: [
+                        payment.tenant,
+                        ...(payment.owner ? [payment.owner] : []),
+                    ],
+                    admins: true,
                 },
-                dedupeKey:
-                    `rent-overdue-owner:${payment._id.toString()}`,
-            });
+                "payment",
+                "overdue",
+                payment._id
+            );
         }
+    }
+};
 
-        emitDashboardUpdate(
-            {
-                userIds: [
-                    payment.tenant,
-                    ...(payment.owner ? [payment.owner] : []),
-                ],
-                admins: true,
-            },
-            "payment",
-            "overdue",
-            payment._id
-        );
+/**
+ * Sends a reminder message and email to the tenant 1 day before their lease ends,
+ * asking if they would like to extend their rental.
+ */
+const processLeaseEndingReminders = async (
+    today: Date
+): Promise<void> => {
+    const tomorrow = new Date(today.getTime() + DAY_MS);
+    const dayAfterTomorrow = new Date(today.getTime() + 2 * DAY_MS);
+
+    const endingRentals = await Rental.find({
+        status: "active",
+        leaseEnd: {
+            $gte: tomorrow,
+            $lt: dayAfterTomorrow,
+        },
+    })
+        .populate("property", "title")
+        .populate("tenant", "email name")
+        .lean();
+
+    for (const rental of endingRentals) {
+        const tenant = rental.tenant as any;
+        const property = rental.property as any;
+        const tenantId = tenant?._id ? tenant._id.toString() : rental.tenant?.toString();
+        const tenantEmail = tenant?.email;
+        const tenantName = tenant?.name || "Tenant";
+        const propertyTitle = property?.title || "Your Rented Property";
+        const formattedDate = new Date(rental.leaseEnd).toLocaleDateString("en-IN", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+        });
+
+        const dedupeKey = `lease-ending-1day:${rental._id.toString()}`;
+
+        try {
+            await notificationService.notify({
+                recipient: tenantId,
+                title: "Lease ending tomorrow: Extend your rental",
+                message: `Your lease for ${propertyTitle} ends tomorrow (${formattedDate}). If you would like to extend your rental, please check your options in the tenant portal.`,
+                type: "rental_status",
+                referenceId: rental._id.toString(),
+                referenceType: "rental",
+                data: {
+                    rentalId: rental._id.toString(),
+                    propertyId: property?._id ? property._id.toString() : rental.property.toString(),
+                },
+                dedupeKey,
+            });
+
+            if (tenantEmail) {
+                await sendLeaseEndingReminderEmail(tenantEmail, {
+                    propertyTitle,
+                    tenantName,
+                    leaseEndDate: formattedDate,
+                });
+            }
+
+            emitDashboardUpdate(
+                {
+                    userIds: [tenantId],
+                    admins: false,
+                },
+                "rental",
+                "status_changed",
+                rental._id
+            );
+        } catch (error) {
+            console.error(
+                `Failed lease ending reminder for rental ${rental._id}:`,
+                error
+            );
+        }
     }
 };
 
@@ -827,13 +920,14 @@ export const runRentalScheduler = async (): Promise<void> => {
         // 1. Expire unpaid agreements.
         await expireUnpaidAgreements(now);
 
-        // 2. End rentals whose lease-end day has passed.
+        // 2. End rentals whose lease-end day + 3 days grace period has passed.
+        const threeDaysAgo = new Date(today.getTime() - 3 * DAY_MS);
         const expiredRentals = await Rental.find({
             status: {
                 $in: ["scheduled", "active"],
             },
             leaseEnd: {
-                $lt: today,
+                $lt: threeDaysAgo,
             },
         }).lean();
 
@@ -845,7 +939,7 @@ export const runRentalScheduler = async (): Promise<void> => {
                         $in: ["scheduled", "active"],
                     },
                     leaseEnd: {
-                        $lt: today,
+                        $lt: threeDaysAgo,
                     },
                 },
                 {
@@ -936,6 +1030,9 @@ export const runRentalScheduler = async (): Promise<void> => {
 
         // 6. Send rent reminders.
         await processRentReminders(today);
+
+        // 7. Send lease ending reminders 1 day prior to lease expiration.
+        await processLeaseEndingReminders(today);
     } catch (error) {
         console.error(
             "Error running rental scheduler:",

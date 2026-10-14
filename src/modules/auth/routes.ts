@@ -158,6 +158,27 @@ router.get(
 );
 
 router.get(
+    "/admin/users/:userId",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.getUserDetails
+);
+
+router.patch(
+    "/admin/users/:userId",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.updateUser
+);
+
+router.delete(
+    "/admin/users/:userId",
+    protect,
+    requireRole(UserRole.ADMIN),
+    authController.deleteUser
+);
+
+router.get(
     "/admin/verifications/:userId/id-image",
     protect,
     requireRole(UserRole.ADMIN),

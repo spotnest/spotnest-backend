@@ -388,6 +388,20 @@ const getAdminPropertyById = async (id: string): Promise<AdminProperty> => {
     return property;
 };
 
+const adminDeleteProperty = async (id: string): Promise<{ message: string }> => {
+    const property = await propertyRepository.findById(id);
+    if (!property) throw new AppError(404, "Property not found");
+
+    if (property.images?.length) {
+        await Promise.allSettled(property.images.map((img) => deleteImage(img.publicId)));
+    }
+
+    await propertyRepository.deletePropertyById(id);
+    emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
+    return { message: "Property deleted permanently" };
+};
+
+
 const propertyService = {
     createProperty,
     listProperties,
@@ -402,5 +416,6 @@ const propertyService = {
     archiveProperty,
     listAllForAdmin,
     getAdminPropertyById,
+    adminDeleteProperty,
 };
 export default propertyService;

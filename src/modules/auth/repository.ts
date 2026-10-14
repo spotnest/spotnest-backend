@@ -68,10 +68,61 @@ const updateProfile = async (
 const findAllUsers = async (): Promise<IUser[]> => {
     return User.find({})
         .select(
-            "name email role status isVerified verificationStatus created_at"
+            "name email phone role status isVerified verificationStatus created_at"
         )
         .sort({ created_at: -1 });
 };
+
+const adminFindUsers = async (options: {
+    page: number;
+    limit: number;
+    role?: string | undefined;
+    status?: string | undefined;
+    verificationStatus?: string | undefined;
+    search?: string | undefined;
+}): Promise<{ users: IUser[]; total: number }> => {
+    const filter: Record<string, unknown> = {};
+
+    if (options.role) {
+        filter.role = options.role;
+    }
+    if (options.status) {
+        filter.status = options.status;
+    }
+    if (options.verificationStatus) {
+        filter.verificationStatus = options.verificationStatus;
+    }
+    if (options.search && options.search.trim()) {
+        const regex = new RegExp(options.search.trim(), "i");
+        filter.$or = [{ name: regex }, { email: regex }, { phone: regex }];
+    }
+
+    const skip = (options.page - 1) * options.limit;
+    const [users, total] = await Promise.all([
+        User.find(filter)
+            .select("name email phone role status isVerified verificationStatus rejectionReason image created_at")
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(options.limit)
+            .lean(),
+        User.countDocuments(filter),
+    ]);
+
+    return { users: users as unknown as IUser[], total };
+};
+
+const adminUpdateUser = async (
+    userId: string,
+    data: { [K in "name" | "email" | "phone" | "role" | "status" | "isVerified" | "verificationStatus"]?: IUser[K] | undefined }
+): Promise<IUser | null> => {
+    return User.findByIdAndUpdate(
+        userId,
+        { $set: data },
+        { returnDocument: "after", runValidators: true }
+    );
+};
+
+
 
 // --------------------------------------------------
 // Admins
@@ -432,6 +483,8 @@ const authRepository = {
     findById,
     updateProfile,
     findAllUsers,
+    adminFindUsers,
+    adminUpdateUser,
     findAdminIds,
 
     findByEmailWithOtp,

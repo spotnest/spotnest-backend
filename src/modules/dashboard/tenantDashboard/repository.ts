@@ -3,10 +3,19 @@ import { Payment, Rental } from "./model.js";
 import { MaintenanceRequest } from "../../maintenance/model.js";
 import type { IPayment, IRental } from "./type.js";
 
-const findActiveRental = (tenant: string) =>
-    Rental.findOne({ tenant, status: "active" })
+const findActiveRental = (tenant: string) => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    return Rental.findOne({
+        tenant,
+        $or: [
+            { status: "active" },
+            { status: "ended", leaseEnd: { $gte: threeDaysAgo } },
+        ],
+    })
+        .sort({ leaseEnd: -1, created_at: -1 })
         .populate("property")
         .populate("owner", "name email phone");
+};
 const findPayments = (tenant: string, rental: string) =>
     Payment.find({ tenant, rental })
         .sort({ dueDate: -1, created_at: -1 });
@@ -21,7 +30,9 @@ const activateDueRentals = async (tenant: string) => {
             await Booking.updateMany({ _id: { $in: bookingIds }, status: "CONFIRMED" }, { $set: { status: "ACTIVE" } });
         }
     }
-    const expired = await Rental.find({ tenant, status: { $in: ["active", "scheduled"] }, leaseEnd: { $lt: now } }).select("booking");
+    // Only conclude the rental after 3 days past leaseEnd
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const expired = await Rental.find({ tenant, status: { $in: ["active", "scheduled"] }, leaseEnd: { $lt: threeDaysAgo } }).select("booking");
     if (expired.length) {
         await Rental.updateMany({ _id: { $in: expired.map((rental) => rental._id) } }, { $set: { status: "ended" } });
         const bookingIds = expired.flatMap((rental) => rental.booking ? [rental.booking] : []);

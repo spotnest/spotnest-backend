@@ -42,6 +42,35 @@ const getPayments = async (tenantId: string) => {
     if (!rental) return { rental: null, payments: [], summary: null };
     await (await import("../../payments/service.js")).default.ensureMonthlyRentPayments(rental._id.toString());
     const payments = await repository.findPayments(tenantId, rental._id.toString());
+
+    // Calculate up-to-date fine for unpaid overdue payments (₹50/day fine starting day after dueDate)
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    for (const payment of payments) {
+        if (payment.type === "MONTHLY_RENT" && payment.status.toUpperCase() !== "PAID" && payment.dueDate) {
+            const dueDay = new Date(Date.UTC(payment.dueDate.getUTCFullYear(), payment.dueDate.getUTCMonth(), payment.dueDate.getUTCDate()));
+            if (today > dueDay) {
+                const overdueDays = Math.floor((today.getTime() - dueDay.getTime()) / (24 * 60 * 60 * 1000));
+                const computedLateFee = overdueDays * 50;
+                if (payment.lateFee !== computedLateFee || payment.status.toUpperCase() !== "OVERDUE") {
+                    payment.lateFee = computedLateFee;
+                    payment.status = "OVERDUE";
+                    payment.lateFeeReason = `Late payment fee: ₹50/day (${overdueDays} ${overdueDays === 1 ? "day" : "days"} overdue)`;
+                    void (await import("./model.js")).Payment.updateOne(
+                        { _id: payment._id },
+                        {
+                            $set: {
+                                lateFee: computedLateFee,
+                                status: "OVERDUE",
+                                lateFeeReason: payment.lateFeeReason,
+                            },
+                        }
+                    );
+                }
+            }
+        }
+    }
+
     const paid = payments.filter((payment) => payment.status.toUpperCase() === "PAID");
     const unpaid = payments.filter((payment) => payment.status.toUpperCase() !== "PAID");
     const recent = [...paid].sort((a, b) => (b.paidAt?.getTime() ?? 0) - (a.paidAt?.getTime() ?? 0))[0];

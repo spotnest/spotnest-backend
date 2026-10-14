@@ -21,6 +21,8 @@ import type {
     ForgotPasswordInput,
     ResetPasswordInput,
     UpdateLocationInput,
+    AdminListUsersQuery,
+    AdminUpdateUserInput,
 } from "./validation.js";
 
 import {
@@ -934,23 +936,148 @@ const changePassword = async (
 // LIST USERS
 // -----------------------------------------------------
 
-const listUsers = async () => {
-    const users =
-        await authRepository.findAllUsers();
+const listUsers = async (query?: AdminListUsersQuery) => {
+    if (!query) {
+        const users = await authRepository.findAllUsers();
+        return users.map((user) => ({
+            id: user._id.toString(),
+            name: user.name,
+            email: user.email,
+            phone: user.phone ?? "",
+            role: user.role,
+            status: user.status,
+            isVerified: user.isVerified,
+            verificationStatus: user.verificationStatus,
+            rejectionReason: user.rejectionReason ?? "",
+            image: user.image ?? "",
+            createdAt: user.created_at.toISOString(),
+        }));
+    }
 
-    return users.map((user) => ({
+    const { users, total } = await authRepository.adminFindUsers({
+        page: query.page,
+        limit: query.limit,
+        ...(query.role ? { role: query.role } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.verificationStatus ? { verificationStatus: query.verificationStatus } : {}),
+        ...(query.search ? { search: query.search } : {}),
+    });
+    const formatted = users.map((user) => ({
         id: user._id.toString(),
         name: user.name,
         email: user.email,
+        phone: user.phone ?? "",
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
-        verificationStatus:
-            user.verificationStatus,
-        createdAt:
-            user.created_at.toISOString(),
+        verificationStatus: user.verificationStatus,
+        rejectionReason: user.rejectionReason ?? "",
+        image: user.image ?? "",
+        createdAt: user.created_at ? new Date(user.created_at).toISOString() : new Date().toISOString(),
     }));
+
+    return {
+        users: formatted,
+        pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            pages: Math.ceil(total / query.limit),
+        },
+    };
 };
+
+const adminGetUserDetails = async (userId: string) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    return {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        phone: user.phone ?? "",
+        role: user.role,
+        status: user.status,
+        isVerified: user.isVerified,
+        verificationStatus: user.verificationStatus,
+        rejectionReason: user.rejectionReason ?? "",
+        image: user.image ?? "",
+        locationName: user.locationName ?? "",
+        rentalTerms: user.rentalTerms ?? "",
+        createdAt: user.created_at.toISOString(),
+        updatedAt: user.updated_at.toISOString(),
+    };
+};
+
+const adminUpdateUser = async (userId: string, data: AdminUpdateUserInput) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    const role = data.role ? (data.role as UserRole) : undefined;
+    let status: UserStatus | undefined;
+    if (data.status) {
+        if (data.status === "blocked") {
+            status = UserStatus.SUSPENDED;
+            user.isBlock = true;
+            await user.save();
+        } else if (data.status === "suspended") {
+            status = UserStatus.SUSPENDED;
+        } else if (data.status === "inactive") {
+            status = UserStatus.INACTIVE;
+        } else if (data.status === "active") {
+            status = UserStatus.ACTIVE;
+            user.isBlock = false;
+            await user.save();
+        }
+    }
+
+    const updatePayload: Parameters<typeof authRepository.adminUpdateUser>[1] = {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.email !== undefined ? { email: data.email } : {}),
+        ...(data.phone !== undefined ? { phone: data.phone } : {}),
+        ...(role !== undefined ? { role } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(data.isVerified !== undefined ? { isVerified: data.isVerified } : {}),
+        ...(data.verificationStatus !== undefined ? { verificationStatus: data.verificationStatus } : {}),
+    };
+
+    const updated = await authRepository.adminUpdateUser(userId, updatePayload);
+    if (!updated) {
+        throw new AppError(500, "Failed to update user");
+    }
+
+    return {
+        id: updated._id.toString(),
+        name: updated.name,
+        email: updated.email,
+        phone: updated.phone ?? "",
+        role: updated.role,
+        status: updated.status,
+        isVerified: updated.isVerified,
+        verificationStatus: updated.verificationStatus,
+        createdAt: updated.created_at.toISOString(),
+    };
+};
+
+const adminDeleteUser = async (userId: string) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    // Clean up profile image or private verification doc if present
+    if (user.idDocumentPublicId) {
+        await deleteIdDocument(user.idDocumentPublicId, user.idDocumentResourceType ?? "image").catch(() => {});
+    }
+
+    await authRepository.deleteUser(userId);
+    return { message: "User deleted successfully" };
+};
+
 
 // -----------------------------------------------------
 // PROFILE IMAGE
@@ -1439,6 +1566,9 @@ const authService = {
     updateLocation,
     changePassword,
     listUsers,
+    adminGetUserDetails,
+    adminUpdateUser,
+    adminDeleteUser,
     uploadProfileImage,
     submitIdVerification,
     listPendingVerifications,

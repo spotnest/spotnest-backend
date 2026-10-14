@@ -567,6 +567,15 @@ const completeVisit = async (
     return updatedVisit;
 };
 
+const adminDeleteVisit = async (visitId: string) => {
+    const visit = await visitRepository.findById(visitId);
+    if (!visit) {
+        throw new AppError(404, "Visit not found");
+    }
+    await visitRepository.deleteById(visitId);
+    return { message: "Visit deleted successfully" };
+};
+
 // -----------------------------------------------------
 // EXPORT
 // -----------------------------------------------------
@@ -583,4 +592,6 @@ export default {
     cancelVisit,
     completeVisit,
     notifyRequester,
+    adminDeleteVisit,
 };
+

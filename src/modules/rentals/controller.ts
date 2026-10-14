@@ -1,4 +1,4 @@
-import type { Response } from "express";
+import type { Response, NextFunction } from "express";
 import type { AuthRequest } from "../../types/roleTypes.js";
 import service from "./service.js";
 import {
@@ -190,6 +190,31 @@ const lookupTenant = async (req: AuthRequest, res: Response) => {
     res.json({ success: true, data: tenant });
 };
 
+const getAdminRentals = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const { page, limit, status } = req.query;
+        const result = await service.getAdminRentals({
+            ...(page ? { page: Number(page) } : {}),
+            ...(limit ? { limit: Number(limit) } : {}),
+            ...(status ? { status: String(status) } : {}),
+        });
+        res.json({ success: true, data: result.rentals, pagination: result.pagination });
+    } catch (err) {
+        next(err);
+    }
+};
+
+const adminTerminateRental = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const rentalId = req.params.rentalId as string;
+        const reason = req.body?.reason as string | undefined;
+        const result = await service.adminTerminateRental(rentalId, reason);
+        res.json({ success: true, message: result.message });
+    } catch (err) {
+        next(err);
+    }
+};
+
 export default {
     getMyRental,
     getAgreement,
@@ -207,4 +232,7 @@ export default {
     deleteOrCancelAgreement,
     resendAgreement,
     lookupTenant,
+    getAdminRentals,
+    adminTerminateRental,
 };
+

@@ -63,6 +63,13 @@ router.get(
     visitController.getAdminVisits
 );
 
+router.delete(
+    "/admin/:id",
+    protect,
+    requireRole(UserRole.ADMIN),
+    visitController.adminDeleteVisit
+);
+
 /**
  * =========================
  * SINGLE VISIT

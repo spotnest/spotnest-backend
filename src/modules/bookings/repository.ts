@@ -43,6 +43,30 @@ const reviewPendingForOwner = async (
 const updateBooking = async (id: string, payload: Partial<IBooking>) =>
     Booking.findByIdAndUpdate(id, payload, { new: true });
 
+const findForAdmin = async (query?: { status?: string; page?: number; limit?: number }) => {
+    const page = Math.max(1, Number(query?.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query?.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const filter: Record<string, unknown> = {};
+    if (query?.status && query.status !== "ALL") {
+        filter.status = query.status;
+    }
+
+    const [bookings, total] = await Promise.all([
+        Booking.find(filter)
+            .populate("userId", "name email phone image")
+            .populate("ownerId", "name email phone image")
+            .populate("propertyId", "title price advanceAmount address images")
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(limit),
+        Booking.countDocuments(filter),
+    ]);
+
+    return { bookings, total, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+};
+
 export default {
     createBooking,
     findById,
@@ -52,4 +76,6 @@ export default {
     findForOwner,
     reviewPendingForOwner,
     updateBooking,
+    findForAdmin,
 };
+

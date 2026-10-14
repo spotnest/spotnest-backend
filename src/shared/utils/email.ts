@@ -172,3 +172,44 @@ export const sendTenantExtensionInquiryEmail = async (
         `,
     });
 };
+
+export const sendLeaseEndingReminderEmail = async (
+    to: string,
+    details: {
+        propertyTitle: string;
+        tenantName: string;
+        leaseEndDate: string;
+        portalUrl?: string;
+    }
+): Promise<void> => {
+    const resend = getResendClient();
+    if (!resend) {
+        console.warn(
+            `[EMAIL_SKIPPED] RESEND_API_KEY not set — lease ending reminder email to ${to} skipped`
+        );
+        return;
+    }
+
+    const appUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const actionLink = details.portalUrl || `${appUrl}/tenant/dashboard/rental`;
+
+    await resend.emails.send({
+        from,
+        to,
+        subject: `Your lease is ending tomorrow: Option to extend your rental - ${details.propertyTitle}`,
+        html: `
+            <h2>Lease Ending Tomorrow: Option to Extend</h2>
+            <p>Hello <strong>${details.tenantName}</strong>,</p>
+            <p>Your lease for <strong>${details.propertyTitle}</strong> is ending tomorrow on <strong>${details.leaseEndDate}</strong>.</p>
+            <p>If you wish to extend your stay or discuss renewal terms, please visit your tenant portal or contact your property owner.</p>
+            <p style="margin-top:20px;">
+                <a href="${actionLink}" style="display:inline-block;padding:12px 22px;background:#00696b;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">
+                    View Rental & Extension Options
+                </a>
+            </p>
+            <p style="margin-top:15px;color:#75777e;font-size:13px;">
+                Notice: Your property details and payment records will remain accessible in your tenant portal for 3 days after your lease end date.
+            </p>
+        `,
+    });
+};

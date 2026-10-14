@@ -69,6 +69,13 @@ router.get(
     propertyController.getAdminProperty
 );
 
+router.delete(
+    "/admin/:id",
+    protect,
+    requireRole(UserRole.ADMIN),
+    propertyController.adminDeleteProperty
+);
+
 /**
  * =========================
  * PUBLIC

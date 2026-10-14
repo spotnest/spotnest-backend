@@ -93,3 +93,30 @@ export const webhook = async (
         next(error);
     }
 };
+
+export const getAdminPayments = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { page, limit, type, status, search } = req.query;
+        const result = await paymentService.getAdminPayments({
+            ...(page ? { page: Number(page) } : {}),
+            ...(limit ? { limit: Number(limit) } : {}),
+            ...(type ? { type: String(type) } : {}),
+            ...(status ? { status: String(status) } : {}),
+            ...(search ? { search: String(search) } : {}),
+        });
+
+        res.status(200).json({
+            success: true,
+            data: result.payments,
+            summary: result.summary,
+            pagination: result.pagination,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+

@@ -631,6 +631,10 @@ const respondToTenantInquiry = async (
     return booking.toObject();
 };
 
+const listAdminBookings = async (query?: { status?: string; page?: number; limit?: number }) => {
+    return bookingRepository.findForAdmin(query);
+};
+
 export default {
     createBooking,
     getBookingForUser,
@@ -638,4 +642,6 @@ export default {
     listOwnerRequests,
     reviewBooking,
     respondToTenantInquiry,
+    listAdminBookings,
 };
+
