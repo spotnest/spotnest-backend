@@ -28,4 +28,9 @@ router.put("/owner/agreements/:agreementId", protect, requireRole(UserRole.OWNER
 router.delete("/owner/agreements/:agreementId", protect, requireRole(UserRole.OWNER), controller.deleteOrCancelAgreement);
 router.post("/owner/agreements/:agreementId/resend", protect, requireRole(UserRole.OWNER), controller.resendAgreement);
 router.get("/owner/tenants/lookup", protect, requireRole(UserRole.OWNER), controller.lookupTenant);
+
+// Admin routes
+router.get("/admin/all", protect, requireRole(UserRole.ADMIN), controller.getAdminRentals);
+router.post("/admin/:rentalId/terminate", protect, requireRole(UserRole.ADMIN), controller.adminTerminateRental);
+
 export default router;

@@ -81,3 +81,14 @@ export const updateStatus = async (req: AuthRequest, res: Response, next: NextFu
         next(error);
     }
 };
+
+export const getAdminRequests = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const query = listMaintenanceQuerySchema.parse(req.query);
+        const result = await service.getAdminRequests(query);
+        res.status(200).json(result);
+    } catch (error) {
+        next(error);
+    }
+};
+

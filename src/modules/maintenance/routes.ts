@@ -18,6 +18,9 @@ router.get("/tenant/requests", requireRole(UserRole.TENANT), controller.getTenan
 router.get("/owner/summary", requireRole(UserRole.OWNER), controller.getOwnerSummary);
 router.get("/owner/requests", requireRole(UserRole.OWNER), controller.getOwnerRequests);
 
+// Admin routes
+router.get("/admin/all", requireRole(UserRole.ADMIN), controller.getAdminRequests);
+
 // Shared / Role-checked detail & action routes
 router.get("/:id", controller.getRequestDetails);
 router.patch("/:id/status", controller.updateStatus);

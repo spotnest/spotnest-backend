@@ -226,3 +226,17 @@ export const completeVisit = async (
         next(err);
     }
 };
+
+export const adminDeleteVisit = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const visitId = visitIdSchema.parse(req.params.id);
+        const result = await visitService.adminDeleteVisit(visitId);
+        res.status(200).json({ success: true, message: result.message });
+    } catch (err) {
+        next(err);
+    }
+};

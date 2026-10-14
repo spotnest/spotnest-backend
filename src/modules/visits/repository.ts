@@ -141,31 +141,48 @@ const findForAdmin = async (
         ? { status: options.status }
         : {};
 
-    const [visits, total] = await Promise.all([
+    const [rawVisits, total] = await Promise.all([
         Visit.find(filter)
-            .populate(
-                "property",
-                "title address images"
-            )
+            .populate({
+                path: "property",
+                select: "title address images owner price",
+                populate: {
+                    path: "owner",
+                    select: "name email phone image",
+                },
+            })
             .populate(
                 "requester",
-                "name email image"
+                "name email phone image"
             )
             .populate(
                 "owner",
-                "name email image"
+                "name email phone image"
             )
             .sort({ updated_at: -1 })
             .skip(options.skip)
-            .limit(options.limit),
+            .limit(options.limit)
+            .lean(),
 
         Visit.countDocuments(filter),
     ]);
+
+    const visits = rawVisits.map((visit: any) => {
+        const owner = visit.owner || visit.property?.owner || null;
+        return {
+            ...visit,
+            owner,
+        };
+    });
 
     return {
         visits,
         total,
     };
+};
+
+const deleteById = async (id: string) => {
+    return Visit.findByIdAndDelete(id);
 };
 
 export default {
@@ -180,4 +197,5 @@ export default {
     findByOwnerAndStatus,
     findByRequesterAndStatus,
     findForAdmin,
+    deleteById,
 };

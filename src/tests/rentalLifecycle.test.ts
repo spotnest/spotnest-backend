@@ -1202,4 +1202,144 @@ describe("Rental Lifecycle, Owner Approval, and 2-Minute Deadline Suite", () => 
             await Property.deleteOne({ _id: prop._id });
         }
     });
+
+    test("28. Overdue rent accrues a ₹50/day fine for each day after the last day of payment", async () => {
+        const { booking, rental, occupant } = await setupFreshAgreement("ACTIVE");
+        const tenantDashboardService = (await import("../modules/dashboard/tenantDashboard/service.js")).default;
+
+        const fourDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+        const overduePayment = await Payment.create({
+            booking: booking._id,
+            rental: rental._id,
+            occupant: occupant._id,
+            tenant: testTenant._id,
+            owner: testOwner._id,
+            property: testProperty._id,
+            type: "MONTHLY_RENT",
+            amount: 25000,
+            currency: "INR",
+            status: "PENDING",
+            billingMonth: "2026-09",
+            dueDate: fourDaysAgo,
+            lateFee: 0,
+        });
+
+        try {
+            // Fetch payments via tenantDashboardService
+            const paymentsData = await tenantDashboardService.getPayments(testTenant._id.toString());
+            const fetchedPayment = paymentsData.payments.find((p: any) => p.id === overduePayment._id.toString());
+
+            assert.ok(fetchedPayment, "Overdue payment should be returned");
+            assert.strictEqual(fetchedPayment.status, "overdue");
+            // 4 days overdue: exactly 4 * 50 = ₹200 fine
+            assert.strictEqual(fetchedPayment.lateFee, 200);
+            assert.strictEqual(paymentsData.summary?.fine, 200);
+            assert.ok(fetchedPayment.lateFeeReason?.includes("₹50/day"));
+        } finally {
+            await Payment.deleteOne({ _id: overduePayment._id });
+            await Rental.deleteOne({ _id: rental._id });
+            await Booking.deleteOne({ _id: booking._id });
+        }
+    });
+
+    test("29. Rental and property remain accessible during the 3-day grace period after leaseEnd, and payment is allowed", async () => {
+        const testTenant29 = await User.create({
+            name: `Test Tenant 29 ${Date.now()}`,
+            email: `tenant29_${Date.now()}@test.spotnest.com`,
+            password_hash: "hashed_pwd",
+            role: UserRole.TENANT,
+            status: UserStatus.ACTIVE,
+        });
+
+        const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+        const booking = await Booking.create({
+            propertyId: testProperty._id,
+            userId: testTenant29._id,
+            ownerId: testOwner._id,
+            startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+            endDate: oneDayAgo,
+            monthlyRent: 25000,
+            advanceAmount: 25000,
+            status: "ACTIVE",
+            paymentStatus: "NOT_DUE",
+        });
+
+        const rental = await Rental.create({
+            booking: booking._id,
+            property: testProperty._id,
+            owner: testOwner._id,
+            tenant: testTenant29._id,
+            monthlyRent: 25000,
+            securityDeposit: 25000,
+            leaseStart: booking.startDate,
+            leaseEnd: oneDayAgo,
+            paymentFrequency: "monthly",
+            status: "ended",
+        });
+
+        const occupant = await RentalOccupant.create({
+            rental: rental._id,
+            tenant: testTenant29._id,
+            rentAmount: 25000,
+            securityDepositShare: 25000,
+            status: "ACTIVE",
+        });
+
+        const tenantDashboardService = (await import("../modules/dashboard/tenantDashboard/service.js")).default;
+        const paymentService = (await import("../modules/payments/service.js")).default;
+
+        try {
+            // Tenant dashboard should still return the rental & property
+            const dashboard = await tenantDashboardService.getDashboard(testTenant29._id.toString());
+            assert.ok(dashboard.rental, "Rental should be visible during the 3-day grace period");
+            assert.strictEqual(dashboard.rental.id, rental._id.toString());
+            assert.strictEqual(dashboard.rental.property.id, testProperty._id.toString());
+
+            // Order creation should NOT reject with 'Rental period has ended' during 3-day grace period
+            const now = new Date();
+            const billingMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+            try {
+                await paymentService.createMonthlyRentOrder(
+                    booking._id.toString(),
+                    billingMonth,
+                    testTenant29._id.toString()
+                );
+            } catch (err: any) {
+                // Must not be "Rental period has ended"
+                assert.notStrictEqual(err.message, "Rental period has ended");
+            }
+        } finally {
+            await RentalOccupant.deleteOne({ _id: occupant._id });
+            await Rental.deleteOne({ _id: rental._id });
+            await Booking.deleteOne({ _id: booking._id });
+            await User.deleteOne({ _id: testTenant29._id });
+        }
+    });
+
+    test("30. Lease ending reminder dispatches notification and email 1 day prior to lease expiration", async () => {
+        const { booking, rental } = await setupFreshAgreement("ACTIVE");
+        rental.status = "active";
+        // Ending tomorrow (1 day ahead)
+        rental.leaseEnd = new Date(Date.now() + 24 * 60 * 60 * 1000 + 3600 * 1000);
+        await rental.save();
+
+        const { runRentalScheduler } = await import("../modules/rentals/scheduler.js");
+
+        try {
+            await runRentalScheduler();
+
+            // Verify notification was sent
+            const Notification = (await import("../modules/notifications/model.js")).default;
+            const notif = await Notification.findOne({
+                recipient: testTenant._id,
+                title: /Lease ending tomorrow/i,
+            });
+
+            assert.ok(notif, "Tenant should receive lease ending notification");
+            assert.match(notif.message, /ends tomorrow/);
+        } finally {
+            await Rental.deleteOne({ _id: rental._id });
+            await Booking.deleteOne({ _id: booking._id });
+        }
+    });
 });

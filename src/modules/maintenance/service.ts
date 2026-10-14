@@ -420,12 +420,27 @@ const updateStatus = async (
     return toResponse(updated);
 };
 
+const getAdminRequests = async (query: ListMaintenanceQuery) => {
+    const { requests, total } = await repository.findAdminRequests(query);
+    return {
+        requests: requests.map(toResponse),
+        pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            totalPages: Math.ceil(total / query.limit),
+        },
+    };
+};
+
 export default {
     getEligibleProperties,
     createRequest,
     getTenantRequests,
     getOwnerRequests,
+    getAdminRequests,
     getOwnerSummary,
     getRequestDetails,
     updateStatus,
 };
+

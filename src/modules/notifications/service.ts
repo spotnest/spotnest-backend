@@ -37,6 +37,7 @@ const PAYMENT_TYPES: NotificationType[] = [
 ];
 
 const paymentsPathFor = (role?: UserRole): string | undefined => {
+    if (role === UserRole.ADMIN) return "/admin/payments";
     if (role === UserRole.OWNER) return "/owner/rentals";
     if (role === UserRole.TENANT) return "/tenant/dashboard/payments";
     if (role === UserRole.USER) return "/bookings";
@@ -44,6 +45,7 @@ const paymentsPathFor = (role?: UserRole): string | undefined => {
 };
 
 const rentalPathFor = (role?: UserRole): string | undefined => {
+    if (role === UserRole.ADMIN) return "/admin/rentals";
     if (role === UserRole.OWNER) return "/owner/rentals";
     if (role === UserRole.TENANT) return "/tenant/dashboard/rental";
     if (role === UserRole.USER) return "/bookings";
@@ -56,8 +58,12 @@ const targetUrlFor = (
 ): string | undefined => {
     const { type, referenceType, referenceId, data } = notification;
 
-    // Visit requests: owners manage requests; requesters view the property.
+    // Visit requests: owners manage requests; requesters view the property; admin monitors requests
     if (referenceType === "visit" && referenceId) {
+        if (role === UserRole.ADMIN) {
+            return "/requests/owner-approvals";
+        }
+
         if (role === UserRole.OWNER) {
             return `/owner/requests?visitId=${referenceId.toString()}`;
         }
@@ -68,6 +74,9 @@ const targetUrlFor = (
     }
 
     if (type === "rental_request") {
+        if (role === UserRole.ADMIN) {
+            return "/admin/rentals";
+        }
         return "/bookings?tab=requests";
     }
 
@@ -91,6 +100,9 @@ const targetUrlFor = (
         (type === "rental_approved" || type === "rental_rejected") &&
         referenceId
     ) {
+        if (role === UserRole.ADMIN) {
+            return "/admin/rentals";
+        }
         if (referenceType === "booking") {
             return `/bookings?bookingId=${referenceId.toString()}`;
         }
@@ -98,18 +110,25 @@ const targetUrlFor = (
         return rentalPathFor(role);
     }
 
-    if (type === "property_status" && referenceId) {
+    if (type === "property_status") {
+        if (role === UserRole.ADMIN) {
+            return "/admin/properties";
+        }
         if (role === UserRole.OWNER) {
             return "/owner/properties";
         }
 
-        return `/properties/${referenceId.toString()}`;
+        return referenceId ? `/properties/${referenceId.toString()}` : "/properties";
     }
 
     if (
         type.startsWith("maintenance_") ||
         referenceType === "maintenance"
     ) {
+        if (role === UserRole.ADMIN) {
+            return "/admin/maintenance";
+        }
+
         if (role === UserRole.OWNER) {
             return "/owner/dashboard/maintenance";
         }
@@ -118,6 +137,7 @@ const targetUrlFor = (
             return "/tenant/dashboard/maintenance";
         }
     }
+
 
     // Support legacy payment notifications stored as system + booking.
     if (type === "system" && referenceType === "booking") {

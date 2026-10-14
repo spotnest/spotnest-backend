@@ -91,3 +91,22 @@ export const respondToTenantInquiry = async (
     }
 };
 
+export const listAdminBookings = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { status, page, limit } = req.query;
+        const result = await bookingService.listAdminBookings({
+            ...(status ? { status: String(status) } : {}),
+            ...(page ? { page: Number(page) } : {}),
+            ...(limit ? { limit: Number(limit) } : {}),
+        });
+        res.status(200).json({ success: true, data: result.bookings, pagination: result.pagination });
+    } catch (error) {
+        next(error);
+    }
+};
+
+

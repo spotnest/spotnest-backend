@@ -179,6 +179,29 @@ const updateStatusAndFields = async (
         .populate("statusHistory.changedBy", "name role");
 };
 
+const findAdminRequests = async (
+    query: ListMaintenanceQuery
+): Promise<{ requests: IMaintenanceRequest[]; total: number }> => {
+    const filter = buildFilter({}, query);
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [requests, total] = await Promise.all([
+        MaintenanceRequest.find(filter)
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate("property", "title propertyType address images")
+            .populate("tenant", "name email phone")
+            .populate("owner", "name email phone")
+            .populate("statusHistory.changedBy", "name role"),
+        MaintenanceRequest.countDocuments(filter),
+    ]);
+
+    return { requests, total };
+};
+
 export default {
     findActiveRentalsForTenant,
     findActiveRentalForTenantAndProperty,
@@ -186,6 +209,7 @@ export default {
     findById,
     findTenantRequests,
     findOwnerRequests,
+    findAdminRequests,
     getOwnerSummary,
     updateStatusAndFields,
 };
