@@ -42,7 +42,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-app.use("/api/v1", apiRouter);
+app.use("/api", apiRouter);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
