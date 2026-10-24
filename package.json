@@ -7,21 +7,26 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "google-auth-library": "^11.0.2",
+    "groq-sdk": "^1.6.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.5",
     "multer": "^2.4.0",
+    "razorpay": "^2.9.8",
     "resend": "^6.27.0",
-    "zod": "^4.5.4"
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.7"
   },
   "type": "module",
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/cookie": "^0.6.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.6.5",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
@@ -30,6 +35,8 @@
     "dev": "tsx watch src/server.ts",
     "seed": "tsx src/seed.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/tests/**/*.test.ts"
   }
 }

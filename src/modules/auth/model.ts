@@ -36,7 +36,22 @@ const userSchema = new Schema<IUser>(
             enum: ["unsubmitted", "pending", "approved", "rejected"],
             default: "unsubmitted",
         },
+        rentalTerms: {
+        type: String,
+        trim: true,
+        maxlength: 10000,
+        },
         idDocumentPublicId: { type: String, select: false }, // only field here that's genuinely sensitive
+        idDocumentResourceType: {
+            type: String,
+            enum: ["image", "raw"],
+            select: false,
+        },
+        idDocumentFormat: {
+            type: String,
+            enum: ["jpg", "png", "pdf"],
+            select: false,
+        },
         rejectionReason: { type: String },
         verificationSubmittedAt: { type: Date },
         verificationReviewedAt: { type: Date },
@@ -83,6 +98,18 @@ const userSchema = new Schema<IUser>(
             default: 0,
             select: false,
         },
+        location: {
+            type: {
+                type: String,
+                enum: ["Point"],
+            },
+            coordinates: {
+                type: [Number], // [longitude, latitude]
+            },
+        },
+        locationName: { type: String, maxlength: 200 },
+        locationResolvedName: { type: String, maxlength: 300 },
+        locationUpdatedAt: { type: Date },
     },
     {
         timestamps: { createdAt: "created_at", updatedAt: "updated_at" },

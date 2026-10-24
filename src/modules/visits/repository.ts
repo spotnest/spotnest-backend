@@ -1,0 +1,201 @@
+import Visit from "./model.js";
+import type { IVisit, VisitStatus } from "./type.js";
+
+export interface CreateVisitData {
+    property: string;
+    requester: string;
+    owner: string;
+    requestedDate: Date;
+    requestedTime: string;
+    message?: string;
+}
+
+const create = async (
+    data: CreateVisitData
+): Promise<IVisit> => {
+    return Visit.create(data);
+};
+
+const findById = async (
+    id: string
+): Promise<IVisit | null> => {
+    return Visit.findById(id);
+};
+
+const findPendingByRequesterAndProperty = async (
+    requester: string,
+    property: string
+): Promise<IVisit | null> => {
+    return Visit.findOne({
+        requester,
+        property,
+        status: "pending",
+    });
+};
+
+const findByRequester = async (
+    requester: string
+): Promise<IVisit[]> => {
+    return Visit.find({ requester })
+        .sort({ created_at: -1 });
+};
+
+const findByOwner = async (
+    owner: string
+): Promise<IVisit[]> => {
+    return Visit.find({ owner })
+        .populate("property", "title price address images")
+        .populate("requester", "name email phone image")
+        .sort({ created_at: -1 });
+};
+
+const findByProperty = async (
+    property: string
+): Promise<IVisit[]> => {
+    return Visit.find({ property })
+        .sort({ created_at: -1 });
+};
+
+const update = async (
+    id: string,
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
+): Promise<IVisit | null> => {
+    return Visit.findByIdAndUpdate(
+        id,
+        { $set: data },
+        {
+            new: true,
+            runValidators: true,
+        }
+    );
+};
+
+/**
+ * Atomically updates a visit only when its current
+ * status is one of the allowed statuses.
+ *
+ * This prevents race conditions where two requests
+ * read the same status and both attempt to transition
+ * the visit.
+ */
+const updateIfStatus = async (
+    id: string,
+    allowedStatuses: VisitStatus[],
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
+): Promise<IVisit | null> => {
+    return Visit.findOneAndUpdate(
+        {
+            _id: id,
+            status: { $in: allowedStatuses },
+        },
+        { $set: data },
+        {
+            new: true,
+            runValidators: true,
+        }
+    );
+};
+
+const findByOwnerAndStatus = async (
+    owner: string,
+    status: VisitStatus
+): Promise<IVisit[]> => {
+    return Visit.find({ owner, status })
+        .sort({ created_at: -1 });
+};
+
+const findByRequesterAndStatus = async (
+    requester: string,
+    status: VisitStatus
+): Promise<IVisit[]> => {
+    return Visit.find({ requester, status })
+        .sort({ created_at: -1 });
+};
+
+const findForAdmin = async (
+    options: {
+        status?: VisitStatus;
+        limit: number;
+        skip: number;
+    }
+) => {
+    const filter = options.status
+        ? { status: options.status }
+        : {};
+
+    const [rawVisits, total] = await Promise.all([
+        Visit.find(filter)
+            .populate({
+                path: "property",
+                select: "title address images owner price",
+                populate: {
+                    path: "owner",
+                    select: "name email phone image",
+                },
+            })
+            .populate(
+                "requester",
+                "name email phone image"
+            )
+            .populate(
+                "owner",
+                "name email phone image"
+            )
+            .sort({ updated_at: -1 })
+            .skip(options.skip)
+            .limit(options.limit)
+            .lean(),
+
+        Visit.countDocuments(filter),
+    ]);
+
+    const visits = rawVisits.map((visit: any) => {
+        const owner = visit.owner || visit.property?.owner || null;
+        return {
+            ...visit,
+            owner,
+        };
+    });
+
+    return {
+        visits,
+        total,
+    };
+};
+
+const deleteById = async (id: string) => {
+    return Visit.findByIdAndDelete(id);
+};
+
+export default {
+    create,
+    findById,
+    findPendingByRequesterAndProperty,
+    findByRequester,
+    findByOwner,
+    findByProperty,
+    update,
+    updateIfStatus,
+    findByOwnerAndStatus,
+    findByRequesterAndStatus,
+    findForAdmin,
+    deleteById,
+};

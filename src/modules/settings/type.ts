@@ -8,7 +8,7 @@ export interface ISettings extends Document {
     ownerRegistrationEnabled: boolean;
     propertyApprovalRequired: boolean;
     propertyListingEnabled: boolean;
-    defaultListingStatus: "active" | "inactive";
+    subscriptionsEnabled: boolean;
     newOwnerRegistrationAlerts: boolean;
     ownerApprovalEmails: boolean;
     platformName: string;

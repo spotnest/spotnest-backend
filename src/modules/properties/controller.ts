@@ -7,6 +7,7 @@ import {
     updatePropertySchema,
     listPropertiesQuerySchema,
     adminListPropertiesQuerySchema,
+    nearbyQuerySchema,
 } from "./validation.js";
 
 
@@ -49,6 +50,16 @@ export const listProperties = async (req: Request, res: Response, next: NextFunc
     }
 };
 
+export const listNearby = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const query = nearbyQuerySchema.parse(req.query);
+        const result = await propertyService.listNearbyProperties(req.user!.id, query);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getProperty = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const property = await propertyService.getPublicPropertyById(req.params.id as string);
@@ -67,6 +78,15 @@ export const listMyProperties = async (req: AuthRequest, res: Response, next: Ne
     }
 };
 
+export const getMyProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const property = await propertyService.getMyPropertyById(req.params.id as string, req.user!.id);
+        res.status(200).json(property);
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const updateProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
         const data = updatePropertySchema.parse(parseJsonFields(req.body));
@@ -80,8 +100,8 @@ export const updateProperty = async (req: AuthRequest, res: Response, next: Next
 export const updateStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
         const { status } = req.body;
-        if (status !== "active" && status !== "inactive") {
-            throw new AppError(400, "status must be 'active' or 'inactive'");
+        if (status !== "active" && status !== "inactive" && status !== "archived") {
+            throw new AppError(400, "status must be 'active', 'inactive', or 'archived'");
         }
         const result = await propertyService.updateStatus(req.params.id as string, req.user!.id, req.user!.role, status);
         res.status(200).json(result);
@@ -146,3 +166,12 @@ export const getAdminProperty = async (req: AuthRequest, res: Response, next: Ne
         next(err);
     }
 };
+
+export const adminDeleteProperty = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const result = await propertyService.adminDeleteProperty(req.params.id as string);
+        res.status(200).json(result);
+    } catch (err) {
+        next(err);
+    }
+};

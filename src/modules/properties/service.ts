@@ -1,17 +1,39 @@
-import propertyRepository from "./repository.js";
+import mongoose from "mongoose";
+import propertyRepository, { NEARBY_RADIUS_METERS } from "./repository.js";
+import authRepository from "../auth/repository.js";
 import { AppError } from "../../shared/errors/AppError.js";
+import { geocode } from "../../shared/utils/geocode.js";
 import { uploadImage, deleteImage } from "../../shared/utils/cloudinary.js";
 import { UserRole } from "../auth/type.js";
-import type { AdminProperty, IProperty } from "./type.js";
+import type { AdminProperty, IProperty, PropertyAddress, PropertyImage, PublicProperty } from "./type.js";
 import settingsRepository from "../settings/repository.js";
+import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
+import subscriptionService from "../subscriptions/service.js";
+import { Rental } from "../dashboard/tenantDashboard/model.js";
 import type {
     CreatePropertyInput,
     UpdatePropertyInput,
     ListPropertiesQuery,
     AdminListPropertiesQuery,
+    NearbyQuery,
 } from "./validation.js";
 
-const MAX_IMAGES = 8;
+const geocodeAddress = async (address: PropertyAddress) => {
+    // Try the full street address first. Indian street-level addresses often
+    // fail to resolve, so fall back to locality level — plenty for a 10 km radius.
+    const full = `${address.street}, ${address.city}, ${address.state} ${address.zipCode}, ${address.country}`;
+    const locality = `${address.city}, ${address.state}, ${address.country}`;
+
+    const result = (await geocode(full)) ?? (await geocode(locality));
+    if (!result) {
+        throw new AppError(
+            400,
+            "Could not locate that address. Check the city and state are spelled correctly."
+        );
+    }
+    return result;
+};
 
 const assertOwnershipOrAdmin = (property: IProperty, userId: string, role: string) => {
     if (property.owner.toString() !== userId && role !== UserRole.ADMIN) {
@@ -24,46 +46,89 @@ const createProperty = async (
     data: CreatePropertyInput,
     files: { buffer: Buffer; mimetype: string }[]
 ): Promise<IProperty> => {
+    /**
+     * Plan limit first.
+     *
+     * Deliberately the very first thing that touches the network: the caller's
+     * listing cap must be checked BEFORE geocoding (an outbound HTTP call) and
+     * BEFORE any Cloudinary upload (money and orphaned assets). A rejected
+     * create costs one DB count.
+     */
+    await subscriptionService.assertCanCreateListing(ownerId);
+
     const settings = await settingsRepository.getGlobal();
     if (!settings.propertyListingEnabled) throw new AppError(403, "Property listing is currently disabled");
     if (files.length === 0) {
         throw new AppError(400, "At least one property image is required");
     }
-    if (files.length > MAX_IMAGES) {
-        throw new AppError(400, `A maximum of ${MAX_IMAGES} images is allowed`);
-    }
+
+    // Photo cap comes from the owner's plan, not a fixed constant.
+    await subscriptionService.assertImageLimit({
+        ownerId,
+        role: UserRole.OWNER,
+        existingImages: 0,
+        additionalImages: files.length,
+    });
+
+    // Listings go live with the final status once their images are attached.
+    // Only pending-admin-approval mode keeps them offline.
+    const status = settings.propertyApprovalRequired ? "inactive" : "active";
 
     // Create the listing as "inactive" — it is NOT visible to the public yet
     // (public listing only shows status "active"). It only becomes "active"
     // in the same atomic $set that attaches the uploaded images, so there is
     // no window where an image-less listing is live.
     const { areaSqFt, ...listingFields } = data;
+
+    // Geocode BEFORE creating the document — a failed lookup costs nothing
+    // here and needs no rollback.
+    const geo = await geocodeAddress(data.address);
+
     const property = await propertyRepository.createProperty({
         ...listingFields,
         owner: ownerId,
+        advanceAmount: data.advanceAmount ?? data.price,
+        location: { type: "Point", coordinates: [geo.lng, geo.lat] }, // [lng, lat]
+        locationResolvedName: geo.displayName,
         images: [],
-        status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
+        status: "inactive",
         ...(areaSqFt !== undefined ? { areaSqFt } : {}),
     });
 
+    const uploadResults = await Promise.allSettled(
+        files.map((file) =>
+            uploadImage(file.buffer, `spotnest/properties/${property._id.toString()}`)
+        )
+    );
+
     const uploaded: { url: string; publicId: string }[] = [];
-    try {
-        for (const file of files) {
-            const { url, publicId } = await uploadImage(
-                file.buffer,
-                `spotnest/properties/${property._id.toString()}`
-            );
-            uploaded.push({ url, publicId });
+    let hasError = false;
+
+    for (const result of uploadResults) {
+        if (result.status === "fulfilled") {
+            uploaded.push(result.value);
+        } else {
+            hasError = true;
         }
-        const withImages = await propertyRepository.updateProperty(property._id.toString(), {
-            images: uploaded,
-            status: settings.propertyApprovalRequired || settings.defaultListingStatus === "inactive" ? "inactive" : "active",
-        } as Partial<IProperty>);
-        return withImages!;
-    } catch (err) {
+    }
+
+    if (hasError) {
         await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
         // The listing never became public (it stayed "inactive"), so hard-delete
         // it rather than leave an image-less row in the archive.
+        await propertyRepository.deletePropertyById(property._id.toString());
+        throw new AppError(500, "Failed to create property listing. Please try again.");
+    }
+
+    try {
+        const withImages = await propertyRepository.updateProperty(property._id.toString(), {
+            images: uploaded,
+            status,
+        } as Partial<IProperty>);
+        emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "created", property._id);
+        return withImages!;
+    } catch (err) {
+        await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
         await propertyRepository.deletePropertyById(property._id.toString());
         throw new AppError(500, "Failed to create property listing. Please try again.");
     }
@@ -77,16 +142,72 @@ const listProperties = async (query: ListPropertiesQuery) => {
     };
 };
 
-const getPublicPropertyById = async (id: string): Promise<IProperty> => {
-    const property = await propertyRepository.findById(id);
+const listNearbyProperties = async (userId: string, query: NearbyQuery) => {
+    const user = await authRepository.findById(userId);
+    if (!user) throw new AppError(404, "User not found");
+
+    if (!user.location?.coordinates || user.location.coordinates.length !== 2) {
+        throw new AppError(400, "Set your location before searching nearby properties");
+    }
+
+    const coordinates = user.location.coordinates as [number, number];
+    const { items, total } = await propertyRepository.findNearby(coordinates, query);
+
+    return {
+        items: items.map((p) => ({
+            ...p,
+            distanceKm: Math.round((p.distanceMeters / 1000) * 10) / 10,
+        })),
+        searchedFrom: user.locationName,
+        radiusKm: NEARBY_RADIUS_METERS / 1000,
+        pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            pages: Math.ceil(total / query.limit),
+        },
+    };
+};
+
+const getPublicPropertyById = async (id: string): Promise<PublicProperty> => {
+    if (!mongoose.isValidObjectId(id)) {
+        throw new AppError(404, "Property not found");
+    }
+    const property = await propertyRepository.findPublicById(id);
     if (!property || property.status !== "active") {
         throw new AppError(404, "Property not found");
     }
-    return property;
+
+    const activeRental = await Rental.findOne({
+        property: property._id,
+        status: "active",
+    }).select("leaseEnd");
+
+    const propertyObj: any = (property as any).toObject ? (property as any).toObject() : { ...property };
+    if (activeRental && activeRental.leaseEnd) {
+        propertyObj.isOccupied = true;
+        propertyObj.occupiedUntil = activeRental.leaseEnd;
+    } else {
+        propertyObj.isOccupied = false;
+        propertyObj.occupiedUntil = null;
+    }
+
+    return propertyObj;
 };
 
 const listOwnerProperties = async (ownerId: string): Promise<IProperty[]> => {
     return propertyRepository.findByOwner(ownerId);
+};
+
+const getMyPropertyById = async (id: string, ownerId: string): Promise<IProperty> => {
+    if (!mongoose.isValidObjectId(id)) {
+        throw new AppError(404, "Property not found");
+    }
+    const property = await propertyRepository.findById(id);
+    if (!property || property.owner.toString() !== ownerId) {
+        throw new AppError(404, "Property not found");
+    }
+    return property;
 };
 
 const updateProperty = async (
@@ -99,7 +220,25 @@ const updateProperty = async (
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
 
-    const updated = await propertyRepository.updateProperty(id, data as Partial<IProperty>);
+    const updatePayload: Partial<IProperty> = { ...data } as Partial<IProperty>;
+
+    if (data.images) {
+        if (data.images.length !== property.images.length) {
+            throw new AppError(400, "Cannot add or remove photos via update endpoint");
+        }
+        const existingUrls = new Set(property.images.map((img) => img.url));
+        const valid = data.images.every((img) => existingUrls.has(img.url));
+        if (!valid) {
+            throw new AppError(400, "Invalid image data for reordering");
+        }
+    }
+
+    if (data.address) {
+        const geo = await geocodeAddress(data.address as PropertyAddress);
+        updatePayload.location = { type: "Point", coordinates: [geo.lng, geo.lat] };
+        updatePayload.locationResolvedName = geo.displayName;
+    }
+    const updated = await propertyRepository.updateProperty(id, updatePayload);
     return updated!;
 };
 
@@ -116,6 +255,22 @@ const updateStatus = async (
         throw new AppError(400, "Cannot change status of an archived property");
     }
     await propertyRepository.setStatus(id, status);
+
+    if (property.status !== status) {
+        if (role === UserRole.ADMIN) {
+            await notificationService.notify({
+                recipient: property.owner.toString(),
+                title: `Property ${status}`,
+                message: `Your property “${property.title}” is now ${status}.`,
+                type: "property_status",
+                referenceId: id,
+                referenceType: "property",
+                data: { propertyId: id },
+            });
+        }
+        emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
+    }
+
     return { message: `Property marked ${status}` };
 };
 
@@ -129,17 +284,37 @@ const addImages = async (
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
 
-    if (property.images.length + files.length > MAX_IMAGES) {
-        throw new AppError(400, `A property can have at most ${MAX_IMAGES} images`);
-    }
+    /**
+     * Cap is checked against the property OWNER, not the caller, so an admin
+     * adding photos to a free-tier owner's listing is measured against that
+     * owner's plan.
+     *
+     * Existing images are never removed when a plan expires or is downgraded —
+     * only adding beyond the current cap is blocked.
+     */
+    await subscriptionService.assertImageLimit({
+        ownerId: property.owner.toString(),
+        role,
+        existingImages: property.images.length,
+        additionalImages: files.length,
+    });
+
+    const uploadResults = await Promise.allSettled(
+        files.map((file) => uploadImage(file.buffer, `spotnest/properties/${id}`))
+    );
 
     const uploaded: { url: string; publicId: string }[] = [];
-    try {
-        for (const file of files) {
-            const { url, publicId } = await uploadImage(file.buffer, `spotnest/properties/${id}`);
-            uploaded.push({ url, publicId });
+    let hasError = false;
+
+    for (const result of uploadResults) {
+        if (result.status === "fulfilled") {
+            uploaded.push(result.value);
+        } else {
+            hasError = true;
         }
-    } catch (err) {
+    }
+
+    if (hasError) {
         await Promise.allSettled(uploaded.map((img) => deleteImage(img.publicId)));
         throw new AppError(500, "Failed to upload images");
     }
@@ -155,26 +330,39 @@ const removeImage = async (
     userId: string,
     role: string,
     publicId: string
-): Promise<{ message: string }> => {
+): Promise<{ message: string; property: IProperty }> => {
     const property = await propertyRepository.findById(id);
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
 
-    const exists = property.images.some((img) => img.publicId === publicId);
-    if (!exists) throw new AppError(404, "Image not found on this property");
+    const targetImage = property.images.find((img) => {
+        const imgObj = img as PropertyImage & { _id?: { toString(): string } };
+        return (
+            (imgObj.publicId && imgObj.publicId === publicId) ||
+            (imgObj._id && imgObj._id.toString() === publicId) ||
+            imgObj.url === publicId
+        );
+    });
+
+    if (!targetImage) throw new AppError(404, "Image not found on this property");
     if (property.images.length <= 1) {
         throw new AppError(400, "A property must have at least one image");
     }
 
-    const remaining = property.images.filter((img) => img.publicId !== publicId);
-    await propertyRepository.updateProperty(id, { images: remaining } as Partial<IProperty>);
+    if (targetImage.publicId) {
+        try {
+            await deleteImage(targetImage.publicId);
+        } catch (err) {
+            console.warn(`[CLOUDINARY_DELETE_WARNING] Failed to delete image from storage: publicId=${targetImage.publicId}`, err);
+        }
+    }
 
-    // Best-effort — the DB is already the source of truth once the update above succeeds.
-    deleteImage(publicId).catch((err) => {
-        console.error(`[CLEANUP_FAILED] could not delete property image publicId=${publicId}`, err);
-    });
+    const remaining = property.images.filter((img) => img !== targetImage);
+    const updated = await propertyRepository.updateProperty(id, {
+        images: remaining,
+    } as Partial<IProperty>);
 
-    return { message: "Image removed" };
+    return { message: "Image removed successfully", property: updated! };
 };
 
 const archiveProperty = async (id: string, userId: string, role: string): Promise<{ message: string }> => {
@@ -182,6 +370,7 @@ const archiveProperty = async (id: string, userId: string, role: string): Promis
     if (!property) throw new AppError(404, "Property not found");
     assertOwnershipOrAdmin(property, userId, role);
     await propertyRepository.setStatus(id, "archived");
+    emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
     return { message: "Property archived" };
 };
 
@@ -199,11 +388,27 @@ const getAdminPropertyById = async (id: string): Promise<AdminProperty> => {
     return property;
 };
 
+const adminDeleteProperty = async (id: string): Promise<{ message: string }> => {
+    const property = await propertyRepository.findById(id);
+    if (!property) throw new AppError(404, "Property not found");
+
+    if (property.images?.length) {
+        await Promise.allSettled(property.images.map((img) => deleteImage(img.publicId)));
+    }
+
+    await propertyRepository.deletePropertyById(id);
+    emitDashboardUpdate({ userIds: [property.owner], admins: true }, "property", "status_changed", id);
+    return { message: "Property deleted permanently" };
+};
+
+
 const propertyService = {
     createProperty,
     listProperties,
+    listNearbyProperties,
     getPublicPropertyById,
     listOwnerProperties,
+    getMyPropertyById,
     updateProperty,
     updateStatus,
     addImages,
@@ -211,5 +416,6 @@ const propertyService = {
     archiveProperty,
     listAllForAdmin,
     getAdminPropertyById,
+    adminDeleteProperty,
 };
 export default propertyService;

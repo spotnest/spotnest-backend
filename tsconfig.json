@@ -40,5 +40,9 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
-  }
+  },
+  // Build only emits src/, so rootDir stays ./src and dist/server.js keeps its
+  // path. Scoping include to src also keeps any future non-source files
+  // (tests, scripts) from breaking the build with a rootDir error.
+  "include": ["src/**/*"],
 }

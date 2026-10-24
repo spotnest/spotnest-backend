@@ -53,3 +53,9 @@ export const propertyImagesUpload = createMultiFileUpload(
     ["image/jpeg", "image/png", "image/webp"],
     8
 );
+
+export const maintenancePhotosUpload = createMultiFileUpload(
+    "photos",
+    ["image/jpeg", "image/png", "image/webp"],
+    5
+);
