@@ -13,7 +13,7 @@ import bookingRoutes from "../modules/bookings/routes.js";
 import paymentRoutes from "../modules/payments/routes.js";
 import rentalRoutes from "../modules/rentals/routes.js";
 import maintenanceRoutes from "../modules/maintenance/routes.js";
-import aiRoutes from "../modules/geminiAI/routes.js"
+import aiRoutes from "../modules/ai/routes.js";
 
 const apiRouter = Router();
 
