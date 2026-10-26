@@ -37,9 +37,16 @@ const protect = async (
 
         const token =
             authorization &&
-            authorization.startsWith("Bearer ")
+                authorization.startsWith("Bearer ")
                 ? authorization.substring(7).trim()
                 : (req.cookies?.accessToken ?? "");
+
+        console.log("Auth debug:", {
+            hasCookies: Boolean(req.cookies),
+            hasAccessToken: Boolean(req.cookies?.accessToken),
+            hasAuthorization: Boolean(req.headers.authorization),
+            tokenFound: Boolean(token),
+        });
 
         if (!token) {
             return res.status(401).json({
@@ -47,6 +54,7 @@ const protect = async (
                 message: "Authentication required",
             });
         }
+
 
         let payload;
 
@@ -97,44 +105,44 @@ const protect = async (
          * if an admin rejects or approves an owner,
          * the middleware sees the latest status.
          */
-req.user = {
-    id: user._id.toString(),
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    permissions: user.permissions ?? [],
-    isVerified: user.isVerified,
-    isBlock: user.isBlock,
+        req.user = {
+            id: user._id.toString(),
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            permissions: user.permissions ?? [],
+            isVerified: user.isVerified,
+            isBlock: user.isBlock,
 
-    ...(user.verificationStatus
-        ? {
-              verificationStatus:
-                  user.verificationStatus,
-          }
-        : {}),
+            ...(user.verificationStatus
+                ? {
+                    verificationStatus:
+                        user.verificationStatus,
+                }
+                : {}),
 
-    ...(user.phone
-        ? { phone: user.phone }
-        : {}),
+            ...(user.phone
+                ? { phone: user.phone }
+                : {}),
 
-    ...(user.image
-        ? { image: user.image }
-        : {}),
+            ...(user.image
+                ? { image: user.image }
+                : {}),
 
-    ...(user.locationName
-        ? {
-              locationName:
-                  user.locationName,
-          }
-        : {}),
+            ...(user.locationName
+                ? {
+                    locationName:
+                        user.locationName,
+                }
+                : {}),
 
-    ...(user.locationResolvedName
-        ? {
-              locationResolvedName:
-                  user.locationResolvedName,
-          }
-        : {}),
-};
+            ...(user.locationResolvedName
+                ? {
+                    locationResolvedName:
+                        user.locationResolvedName,
+                }
+                : {}),
+        };
 
         return next();
     } catch (error) {
@@ -151,33 +159,33 @@ req.user = {
  */
 export const requireRole =
     (...roles: UserRole[]) =>
-    (
-        req: AuthRequest,
-        res: Response,
-        next: NextFunction
-    ) => {
-        if (!req.user) {
-            return res.status(401).json({
-                success: false,
-                message:
-                    "Authentication required",
-            });
-        }
+        (
+            req: AuthRequest,
+            res: Response,
+            next: NextFunction
+        ) => {
+            if (!req.user) {
+                return res.status(401).json({
+                    success: false,
+                    message:
+                        "Authentication required",
+                });
+            }
 
-        if (
-            !roles.includes(
-                req.user.role as UserRole
-            )
-        ) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "You do not have permission to access this resource",
-            });
-        }
+            if (
+                !roles.includes(
+                    req.user.role as UserRole
+                )
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "You do not have permission to access this resource",
+                });
+            }
 
-        return next();
-    };
+            return next();
+        };
 
 /**
  * =========================
@@ -229,7 +237,7 @@ export const requireVerifiedOwner = (
         "approved"
     ) {
         switch (
-            req.user.verificationStatus
+        req.user.verificationStatus
         ) {
             case "pending":
                 return res.status(403).json({
@@ -326,7 +334,7 @@ export const requireOwnerOrAdmin = (
         "approved"
     ) {
         switch (
-            req.user.verificationStatus
+        req.user.verificationStatus
         ) {
             case "pending":
                 return res.status(403).json({
