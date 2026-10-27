@@ -14,7 +14,6 @@ import paymentRoutes from "../modules/payments/routes.js";
 import rentalRoutes from "../modules/rentals/routes.js";
 import maintenanceRoutes from "../modules/maintenance/routes.js";
 import aiRoutes from "../modules/ai/routes.js";
-
 const apiRouter = Router();
 
 apiRouter.use("/auth", authRoutes);
