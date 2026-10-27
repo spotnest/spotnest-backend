@@ -57,6 +57,11 @@ export const updateLocationSchema = z.object({
 });
 export type UpdateLocationInput = z.infer<typeof updateLocationSchema>;
 
+export const suggestLocationSchema = z.object({
+    q: z.string().trim().min(2, "Enter at least 2 characters").max(200),
+});
+export type SuggestLocationInput = z.infer<typeof suggestLocationSchema>;
+
 export const rejectVerificationSchema = z.object({
     reason: z.string().min(1, "Rejection reason is required").max(500),
 });

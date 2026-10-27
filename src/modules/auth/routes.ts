@@ -4,7 +4,7 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import protect from "../../shared/middleware/authMiddleware.js";
 import { requireRole } from "../../shared/middleware/roleMiddleware.js";
-import { authRateLimiter } from "../../shared/middleware/rateLimiter.js";
+import { authRateLimiter, locationSuggestRateLimiter } from "../../shared/middleware/rateLimiter.js";
 import {
     profileImageUpload,
     idDocumentUpload,
@@ -93,6 +93,22 @@ router.get(
 router.patch("/me", protect, authController.updateProfile);
 router.patch("/me/password", protect, authController.changePassword);
 router.patch("/me/location", protect, authController.updateLocation);
+
+/**
+ * =========================
+ * LOCATION TYPEAHEAD
+ * =========================
+ *
+ * Read-only geocoder suggest for the "set your search area" input. Static
+ * segment, so it can never collide with a "/:id" style route.
+ */
+
+router.get(
+    "/location/suggest",
+    protect,
+    locationSuggestRateLimiter,
+    authController.suggestLocations
+);
 
 /**
  * =========================

@@ -33,16 +33,7 @@ const findByOrderId = async (
     return Subscription.findOne({ razorpayOrderId: orderId });
 };
 
-/**
- * Activate a subscription — but only if it is still in "created".
- *
- * The status filter inside the filter document is what makes activation
- * idempotent: /verify and /webhook can both arrive for the same payment and
- * whichever runs second matches nothing and changes nothing. A replay can
- * therefore never re-issue or extend a plan.
- *
- * Returns the activated document, or null when it was already handled.
- */
+
 const activateSubscription = async (input: {
     orderId: string;
     paymentId: string;
@@ -63,11 +54,7 @@ const activateSubscription = async (input: {
     );
 };
 
-/**
- * Flip an order to "failed" when the buyer never completed checkout.
- *
- * Also guarded on "created" so it can never overwrite an active plan.
- */
+
 const failSubscription = async (
     orderId: string,
     status: SubscriptionStatus = "failed"
@@ -78,12 +65,7 @@ const failSubscription = async (
     );
 };
 
-/**
- * Every subscription that is active AND not yet expired at `now`.
- *
- * Expiry is evaluated here, at read time — there is no cron job flipping
- * documents from active to expired.
- */
+
 const findActiveByOwner = async (
     ownerId: string,
     now: Date = new Date()
@@ -95,18 +77,12 @@ const findActiveByOwner = async (
     });
 };
 
-/**
- * Projection used by the entitlement resolver.
- *
- * Only the fields an entitlement decision depends on, so a dashboard read does
- * not pull whole documents over the wire.
- */
+
 const findActiveCandidatesByOwner = async (
     ownerId: string,
     now: Date = new Date()
 ): Promise<ActiveSubscription[]> => {
-    // Every document matching this filter has been through activateSubscription,
-    // which always writes expiresAt — so the projection is safe to assert here.
+    
     return Subscription.find({
         owner: ownerId,
         status: "active",

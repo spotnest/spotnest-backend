@@ -34,7 +34,12 @@ import {
     compareOtp,
 } from "../../shared/utils/otp.js";
 
-import { geocode } from "../../shared/utils/geocode.js";
+import {
+    geocode,
+    suggestPlaces,
+    type PlaceSuggestion,
+    type GeoBias,
+} from "../../shared/utils/geocode.js";
 
 import {
     uploadImage,
@@ -886,6 +891,14 @@ const updateLocation = async (
     };
 };
 
+
+const suggestLocations = async (
+    query: string,
+    bias?: GeoBias
+): Promise<PlaceSuggestion[]> => {
+    return suggestPlaces(query, 5, bias);
+};
+
 // -----------------------------------------------------
 // CHANGE PASSWORD
 // -----------------------------------------------------
@@ -1429,6 +1442,7 @@ const authService = {
     logout,
     updateProfile,
     updateLocation,
+    suggestLocations,
     changePassword,
     listUsers,
     uploadProfileImage,

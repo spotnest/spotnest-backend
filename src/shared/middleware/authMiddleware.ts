@@ -134,6 +134,20 @@ req.user = {
                   user.locationResolvedName,
           }
         : {}),
+
+    /**
+     * Saved coordinates, used to bias location typeahead toward places the
+     * user already cares about. Optional: most requests never read it.
+     */
+    ...(user.location?.coordinates?.length === 2
+        ? {
+              location: {
+                  // Model stores GeoJSON [lng, lat]; bias wants lat/lon.
+                  lat: user.location.coordinates[1],
+                  lng: user.location.coordinates[0],
+              },
+          }
+        : {}),
 };
 
         return next();

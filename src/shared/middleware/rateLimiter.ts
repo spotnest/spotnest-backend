@@ -55,3 +55,12 @@ export const authRateLimiter = createRateLimiter({
     max: 20, // 20 attempts per 15 minutes
     message: "Too many authentication attempts. Please try again in 15 minutes.",
 });
+
+// Geocoder typeahead. Kept well under Nominatim's ~1 request/second per IP
+// policy: 30/minute is 0.5/second sustained, and the frontend debounces
+// keystrokes on top of this.
+export const locationSuggestRateLimiter = createRateLimiter({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30,
+    message: "Too many location lookups. Please wait a moment and try again.",
+});
