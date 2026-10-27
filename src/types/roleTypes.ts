@@ -14,5 +14,6 @@ export interface AuthRequest extends Request {
         verificationStatus?: 'unsubmitted' | 'pending' | 'approved' | 'rejected';
         locationName?: string;
         locationResolvedName?: string;
+        location?: { lat: number; lng: number };
     };
 }

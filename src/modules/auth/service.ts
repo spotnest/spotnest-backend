@@ -24,11 +24,13 @@ import type {
     AdminListUsersQuery,
     AdminUpdateUserInput,
 } from "./validation.js";
-
 import {
     verifyToken,
     toAuthResponse,
+    hashToken,
 } from "../../shared/utils/token.js";
+
+import sessionRepository from "./sessionRepository.js";
 
 import {
     generateOtp,
@@ -36,7 +38,12 @@ import {
     compareOtp,
 } from "../../shared/utils/otp.js";
 
-import { geocode } from "../../shared/utils/geocode.js";
+import {
+    geocode,
+    suggestPlaces,
+    type PlaceSuggestion,
+    type GeoBias,
+} from "../../shared/utils/geocode.js";
 
 import {
     uploadImage,
@@ -57,6 +64,23 @@ import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
 import { emitDashboardUpdate } from "../../shared/socket/index.js";
 
+const saveRefreshSession = async (
+    response: AuthResponse
+): Promise<AuthResponse> => {
+    const payload = verifyToken(response.refreshToken);
+
+    if (payload.type !== "refresh" || !payload.exp) {
+        throw new AppError(500, "Failed to create refresh session");
+    }
+
+    await sessionRepository.createSession({
+        userId: payload.userId,
+        tokenHash: hashToken(response.refreshToken),
+        expiresAt: new Date(payload.exp * 1000),
+    });
+
+    return response;
+};
 // -----------------------------------------------------
 // OWNER APPROVAL REQUEST HELPER
 // -----------------------------------------------------
@@ -107,6 +131,8 @@ const submitOwnerForAdminReview = async (
             );
         });
 };
+
+
 
 // -----------------------------------------------------
 // REGISTER
@@ -419,7 +445,7 @@ const login = async (
         );
     }
 
-    return toAuthResponse(user);
+   return await saveRefreshSession(toAuthResponse(user));
 };
 
 // -----------------------------------------------------
@@ -527,7 +553,7 @@ const verifyEmail = async (
     // NORMAL USER
     // -------------------------------------------------
 
-    return toAuthResponse(user);
+   return await saveRefreshSession(toAuthResponse(user));
 };
 
 // -----------------------------------------------------
@@ -745,77 +771,58 @@ const refresh = async (
     let decoded: JwtPayload;
 
     try {
-        const payload = verifyToken(
-            data.refreshToken
-        );
+        decoded = verifyToken(data.refreshToken);
 
-        if (payload.type !== "refresh") {
-            throw new AppError(
-                401,
-                "Invalid or expired refresh token"
-            );
+        if (decoded.type !== "refresh") {
+            throw new AppError(401, "Invalid refresh token");
         }
-
-        decoded = payload;
-    } catch (err) {
-        if (err instanceof AppError) {
-            throw err;
-        }
-
-        throw new AppError(
-            401,
-            "Invalid or expired refresh token"
-        );
+    } catch {
+        throw new AppError(401, "Invalid or expired refresh token");
     }
 
-    const user =
-        await authRepository.findById(
-            decoded.userId
-        );
+    const tokenHash = hashToken(data.refreshToken);
+
+    const session = await sessionRepository.findActiveSession(tokenHash);
+
+    if (!session || session.userId.toString() !== decoded.userId) {
+        throw new AppError(401, "Refresh token is invalid or revoked");
+    }
+
+    const user = await authRepository.findById(decoded.userId);
 
     if (!user) {
-        throw new AppError(
-            401,
-            "User no longer exists"
-        );
+        throw new AppError(401, "User no longer exists");
     }
 
-    if (
-        user.isBlock ||
-        user.status !== UserStatus.ACTIVE
-    ) {
-        throw new AppError(
-            403,
-            "Account is not active"
-        );
+    if (user.isBlock || user.status !== UserStatus.ACTIVE) {
+        throw new AppError(403, "Account is not active");
     }
 
-    // Owners must remain approved.
     if (
         user.role === UserRole.OWNER &&
         user.verificationStatus !== "approved"
     ) {
-        throw new AppError(
-            403,
-            "Your owner account is not approved"
-        );
+        throw new AppError(403, "Your owner account is not approved");
     }
 
-    return toAuthResponse(user);
-};
+    const revoked = await sessionRepository.revokeSession(tokenHash);
 
-// -----------------------------------------------------
-// LOGOUT
-// -----------------------------------------------------
+    if (!revoked) {
+        throw new AppError(401, "Refresh token already used or revoked");
+    }
+
+    return await saveRefreshSession(toAuthResponse(user));
+};
 
 const logout = async (
-    _refreshToken?: string
+    refreshToken?: string
 ): Promise<{ message: string }> => {
-    return {
-        message: "Logged out successfully",
-    };
-};
+    if (refreshToken) {
+        await sessionRepository.revokeSession(hashToken(refreshToken));
+    }
 
+    return { message: "Logged out successfully" };
+};
 // -----------------------------------------------------
 // UPDATE PROFILE
 // -----------------------------------------------------
@@ -891,6 +898,14 @@ const updateLocation = async (
         locationName: data.locationName,
         resolvedTo: result.displayName,
     };
+};
+
+
+const suggestLocations = async (
+    query: string,
+    bias?: GeoBias
+): Promise<PlaceSuggestion[]> => {
+    return suggestPlaces(query, 5, bias);
 };
 
 // -----------------------------------------------------
@@ -1564,6 +1579,7 @@ const authService = {
     logout,
     updateProfile,
     updateLocation,
+    suggestLocations,
     changePassword,
     listUsers,
     adminGetUserDetails,

@@ -5,24 +5,7 @@ import type {
     SubscriptionPlan,
 } from "./type.js";
 
-/**
- * =========================
- * PLAN CATALOGUE
- * =========================
- *
- * Single source of truth for pricing and limits.
- *
- * SECURITY:
- * Prices here are the ONLY prices the server accepts. The client sends a
- * planId and nothing else — never an amount, never a limit. Changing a
- * number in this file changes what every owner is charged.
- *
- * Amounts are in paise (1 rupee = 100 paise).
- */
 
-/**
- * The tier every owner falls back to. No expiry, no payment.
- */
 export const FREE_PLAN: SubscriptionPlan = {
     id: "free",
     name: "Free",
@@ -34,10 +17,7 @@ export const FREE_PLAN: SubscriptionPlan = {
     maxImages: 2,
 };
 
-/**
- * Purchasable plans, grouped by tier then period so the UI can render one
- * card per tier with a monthly/quarterly toggle.
- */
+
 export const PAID_PLANS: readonly SubscriptionPlan[] = [
     {
         id: "basic_monthly",

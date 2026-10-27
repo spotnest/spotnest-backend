@@ -15,6 +15,7 @@ import {
     updateProfileSchema,
     changePasswordSchema,
     updateLocationSchema,
+    suggestLocationSchema,
     adminListUsersQuerySchema,
     adminUpdateUserSchema,
 } from "./validation.js";
@@ -359,6 +360,19 @@ const updateLocation = async (req: AuthRequest, res: Response, next: NextFunctio
     }
 };
 
+const suggestLocations = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const { q } = suggestLocationSchema.parse(req.query);
+        const suggestions = await authService.suggestLocations(
+            q,
+            req.user?.location
+        );
+        res.status(200).json(suggestions);
+    } catch (err) {
+        next(err);
+    }
+};
+
 const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
         const data = changePasswordSchema.parse(req.body);
@@ -509,6 +523,7 @@ const authController = {
     logout,
     updateProfile,
     updateLocation,
+    suggestLocations,
     changePassword,
     uploadProfileImage,
     uploadIdVerification,

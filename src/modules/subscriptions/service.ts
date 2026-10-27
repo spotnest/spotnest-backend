@@ -25,26 +25,7 @@ import type { CheckoutInput, VerifyInput } from "./validation.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * =========================
- * PURE ENTITLEMENT LOGIC
- * =========================
- *
- * Exported so it can be unit tested without a database. Nothing in here
- * performs IO.
- */
 
-/**
- * Choose the single best subscription when an owner holds several.
- *
- * Best means the largest listingLimit; null means unlimited, so unlimited
- * always wins. maxImages breaks ties.
- *
- * Limits are NEVER combined. An owner with both Basic and Pro active gets
- * the Pro limits for BOTH fields, rather than Pro listings with Basic photos.
- * Expiry is not a factor here — the caller has already filtered to
- * subscriptions that are active and unexpired.
- */
 export const pickBestSubscription = <T extends EntitlementCandidate>(
     candidates: readonly T[]
 ): T | null => {
@@ -107,26 +88,11 @@ export const canCreateWithinLimit = (
 const describeLimit = (limit: number | null): string =>
     limit === null ? "unlimited listings" : `${limit} listings`;
 
-/**
- * True when a subscription has not lapsed.
- *
- * Mirrors the `expiresAt: { $gt: now }` Mongo filter and is re-applied to the
- * query result. The database and the Node process can disagree by a few
- * milliseconds around the boundary (clock skew, replication lag), so the
- * application makes the final call rather than trusting the query alone.
- */
+
 export const isCurrentlyValid = (expiresAt: Date, now: Date): boolean =>
     expiresAt.getTime() > now.getTime();
 
-/**
- * Resolve an entitlement from already-filtered candidates.
- *
- * Falls back to the free tier when the owner holds no unexpired plan, which
- * is the state every new owner starts in.
- *
- * `now` is not compared here — expiry is enforced by the repository query
- * (expiresAt: { $gt: now }). It is accepted so tests can pin the boundary.
- */
+
 export const resolveEntitlement = (
     candidates: readonly EntitlementCandidate[],
     used: number,
@@ -148,8 +114,7 @@ export const resolveEntitlement = (
         };
     }
 
-    // Candidates from the repository always carry planId and tier; the
-    // fallback keeps the resolver total for hand-built candidates in tests.
+   
     const active = best as EntitlementCandidate &
         Partial<Pick<ActiveSubscription, "planId" | "tier">>;
 
@@ -165,10 +130,7 @@ export const resolveEntitlement = (
     };
 };
 
-/**
- * Display name for a plan id, read from the catalogue so names stay in one
- * place.
- */
+
 const planNameFor = (planId: string): string =>
     getPlan(planId)?.name ?? "Subscription";
 
@@ -180,12 +142,7 @@ const listPlans = (): {
     tiers: listPlanTiers(),
 });
 
-/**
- * Read the live subscription state for an owner.
- *
- * When subscriptionsEnabled is off the feature is bypassed entirely, so the
- * owner gets the free tier's shape with an unlimited listing cap.
- */
+
 const getEntitlement = async (ownerId: string): Promise<Entitlement> => {
     const settings = await settingsRepository.getGlobal();
     const used = await propertyRepository.countByOwner(ownerId);
@@ -216,12 +173,7 @@ const getEntitlement = async (ownerId: string): Promise<Entitlement> => {
     return resolveEntitlement(candidates, used, now);
 };
 
-/**
- * Enforce the listing cap.
- *
- * Called at the very top of the property create flow — before geocoding and
- * before any Cloudinary upload — so a rejected request costs nothing.
- */
+
 const assertCanCreateListing = async (ownerId: string): Promise<void> => {
     const settings = await settingsRepository.getGlobal();
 
@@ -254,16 +206,7 @@ const assertCanCreateListing = async (ownerId: string): Promise<void> => {
     }
 };
 
-/**
- * The photo cap for a listing this owner may touch.
- *
- * Admins have no subscription, so they keep the platform ceiling. Owners get
- * their plan's maxImages, falling back to the free tier.
- *
- * Expiry or a downgrade only affects the cap going forward: existing images
- * are never removed, and a listing already holding more photos than the
- * current cap simply cannot have more added.
- */
+
 const resolveImageLimit = async (
     ownerId: string,
     role: string
@@ -293,9 +236,7 @@ const resolveImageLimit = async (
     return best ? best.maxImages : FREE_PLAN.maxImages;
 };
 
-/**
- * Throw if adding `additionalImages` would exceed the owner's photo cap.
- */
+
 const assertImageLimit = async (input: {
     ownerId: string;
     role: string;
@@ -369,12 +310,7 @@ const createCheckout = async (
     };
 };
 
-/**
- * Activate a paid order.
- *
- * Shared by /verify and the webhook. Idempotent by construction: activation
- * only matches documents still in "created", so a replay is a no-op.
- */
+
 const activateOrder = async (orderId: string, paymentId: string) => {
     const subscription = await subscriptionRepository.findByOrderId(orderId);
 
@@ -401,9 +337,7 @@ const verifyCheckout = async (
     ownerId: string,
     input: VerifyInput
 ): Promise<Entitlement> => {
-    /**
-     * A tampered signature is rejected before anything is read or written.
-     */
+   
     const valid = verifyCheckoutSignature({
         orderId: input.razorpay_order_id,
         paymentId: input.razorpay_payment_id,
@@ -452,13 +386,7 @@ interface RazorpayWebhookEvent {
 const readString = (value: unknown): string | null =>
     typeof value === "string" && value.length > 0 ? value : null;
 
-/**
- * Extract the order id and payment id from a webhook event.
- *
- * Handles payment.captured (payment.entity) and order.paid (order.entity),
- * which carry the identifiers in different places. Returns null for events
- * this endpoint does not act on, such as payment.failed.
- */
+
 export const extractWebhookIdentifiers = (
     event: RazorpayWebhookEvent
 ): { orderId: string; paymentId: string } | null => {
@@ -490,14 +418,7 @@ const handleWebhookEvent = async (
     rawBody: Buffer | string,
     signature: string
 ): Promise<{ received: true; handled: boolean }> => {
-    /**
-     * Report an unconfigured server separately from a rejected signature.
-     *
-     * Both look identical from the outside, but they mean opposite things: an
-     * unset secret is an operator mistake to fix, while a bad signature may be
-     * a real forgery attempt worth investigating. Collapsing them into one
-     * "invalid signature" error hides the first behind the second.
-     */
+  
     if (!razorpayWebhookSecret) {
         throw new AppError(
             503,
@@ -519,10 +440,7 @@ const handleWebhookEvent = async (
         throw new AppError(400, "Malformed webhook payload");
     }
 
-    /**
-     * payment.captured is the authoritative "money arrived" signal, so it
-     * takes priority over order.paid.
-     */
+   
     const identifiers = extractWebhookIdentifiers(event);
 
     if (!identifiers) {
@@ -530,10 +448,7 @@ const handleWebhookEvent = async (
         return { received: true, handled: false };
     }
 
-    /**
-     * A webhook for an order we never created is ignored rather than
-     * erroring — Razorpay retries on non-2xx and we do not want a retry loop.
-     */
+   
     const subscription = await subscriptionRepository.findByOrderId(
         identifiers.orderId
     );
