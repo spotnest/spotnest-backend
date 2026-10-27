@@ -21,12 +21,16 @@ import type {
     ForgotPasswordInput,
     ResetPasswordInput,
     UpdateLocationInput,
+    AdminListUsersQuery,
+    AdminUpdateUserInput,
 } from "./validation.js";
-
 import {
     verifyToken,
     toAuthResponse,
+    hashToken,
 } from "../../shared/utils/token.js";
+
+import sessionRepository from "./sessionRepository.js";
 
 import {
     generateOtp,
@@ -58,7 +62,25 @@ import {
 
 import settingsRepository from "../settings/repository.js";
 import notificationService from "../notifications/service.js";
+import { emitDashboardUpdate } from "../../shared/socket/index.js";
 
+const saveRefreshSession = async (
+    response: AuthResponse
+): Promise<AuthResponse> => {
+    const payload = verifyToken(response.refreshToken);
+
+    if (payload.type !== "refresh" || !payload.exp) {
+        throw new AppError(500, "Failed to create refresh session");
+    }
+
+    await sessionRepository.createSession({
+        userId: payload.userId,
+        tokenHash: hashToken(response.refreshToken),
+        expiresAt: new Date(payload.exp * 1000),
+    });
+
+    return response;
+};
 // -----------------------------------------------------
 // OWNER APPROVAL REQUEST HELPER
 // -----------------------------------------------------
@@ -85,6 +107,7 @@ const submitOwnerForAdminReview = async (
             })
         )
     );
+    emitDashboardUpdate({ admins: true }, "user", "verification_changed", user._id);
 
     settingsRepository
         .getGlobal()
@@ -108,6 +131,8 @@ const submitOwnerForAdminReview = async (
             );
         });
 };
+
+
 
 // -----------------------------------------------------
 // REGISTER
@@ -298,6 +323,9 @@ const register = async (
         throw error;
     }
 
+    // Admin dashboards show user totals and recent registrations.
+    emitDashboardUpdate({ admins: true }, "user", "created", user._id);
+
     // -------------------------------------------------
     // OWNER RESPONSE
     // -------------------------------------------------
@@ -417,7 +445,7 @@ const login = async (
         );
     }
 
-    return toAuthResponse(user);
+   return await saveRefreshSession(toAuthResponse(user));
 };
 
 // -----------------------------------------------------
@@ -525,7 +553,7 @@ const verifyEmail = async (
     // NORMAL USER
     // -------------------------------------------------
 
-    return toAuthResponse(user);
+   return await saveRefreshSession(toAuthResponse(user));
 };
 
 // -----------------------------------------------------
@@ -743,77 +771,58 @@ const refresh = async (
     let decoded: JwtPayload;
 
     try {
-        const payload = verifyToken(
-            data.refreshToken
-        );
+        decoded = verifyToken(data.refreshToken);
 
-        if (payload.type !== "refresh") {
-            throw new AppError(
-                401,
-                "Invalid or expired refresh token"
-            );
+        if (decoded.type !== "refresh") {
+            throw new AppError(401, "Invalid refresh token");
         }
-
-        decoded = payload;
-    } catch (err) {
-        if (err instanceof AppError) {
-            throw err;
-        }
-
-        throw new AppError(
-            401,
-            "Invalid or expired refresh token"
-        );
+    } catch {
+        throw new AppError(401, "Invalid or expired refresh token");
     }
 
-    const user =
-        await authRepository.findById(
-            decoded.userId
-        );
+    const tokenHash = hashToken(data.refreshToken);
+
+    const session = await sessionRepository.findActiveSession(tokenHash);
+
+    if (!session || session.userId.toString() !== decoded.userId) {
+        throw new AppError(401, "Refresh token is invalid or revoked");
+    }
+
+    const user = await authRepository.findById(decoded.userId);
 
     if (!user) {
-        throw new AppError(
-            401,
-            "User no longer exists"
-        );
+        throw new AppError(401, "User no longer exists");
     }
 
-    if (
-        user.isBlock ||
-        user.status !== UserStatus.ACTIVE
-    ) {
-        throw new AppError(
-            403,
-            "Account is not active"
-        );
+    if (user.isBlock || user.status !== UserStatus.ACTIVE) {
+        throw new AppError(403, "Account is not active");
     }
 
-    // Owners must remain approved.
     if (
         user.role === UserRole.OWNER &&
         user.verificationStatus !== "approved"
     ) {
-        throw new AppError(
-            403,
-            "Your owner account is not approved"
-        );
+        throw new AppError(403, "Your owner account is not approved");
     }
 
-    return toAuthResponse(user);
-};
+    const revoked = await sessionRepository.revokeSession(tokenHash);
 
-// -----------------------------------------------------
-// LOGOUT
-// -----------------------------------------------------
+    if (!revoked) {
+        throw new AppError(401, "Refresh token already used or revoked");
+    }
+
+    return await saveRefreshSession(toAuthResponse(user));
+};
 
 const logout = async (
-    _refreshToken?: string
+    refreshToken?: string
 ): Promise<{ message: string }> => {
-    return {
-        message: "Logged out successfully",
-    };
-};
+    if (refreshToken) {
+        await sessionRepository.revokeSession(hashToken(refreshToken));
+    }
 
+    return { message: "Logged out successfully" };
+};
 // -----------------------------------------------------
 // UPDATE PROFILE
 // -----------------------------------------------------
@@ -942,23 +951,148 @@ const changePassword = async (
 // LIST USERS
 // -----------------------------------------------------
 
-const listUsers = async () => {
-    const users =
-        await authRepository.findAllUsers();
+const listUsers = async (query?: AdminListUsersQuery) => {
+    if (!query) {
+        const users = await authRepository.findAllUsers();
+        return users.map((user) => ({
+            id: user._id.toString(),
+            name: user.name,
+            email: user.email,
+            phone: user.phone ?? "",
+            role: user.role,
+            status: user.status,
+            isVerified: user.isVerified,
+            verificationStatus: user.verificationStatus,
+            rejectionReason: user.rejectionReason ?? "",
+            image: user.image ?? "",
+            createdAt: user.created_at.toISOString(),
+        }));
+    }
 
-    return users.map((user) => ({
+    const { users, total } = await authRepository.adminFindUsers({
+        page: query.page,
+        limit: query.limit,
+        ...(query.role ? { role: query.role } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.verificationStatus ? { verificationStatus: query.verificationStatus } : {}),
+        ...(query.search ? { search: query.search } : {}),
+    });
+    const formatted = users.map((user) => ({
         id: user._id.toString(),
         name: user.name,
         email: user.email,
+        phone: user.phone ?? "",
         role: user.role,
         status: user.status,
         isVerified: user.isVerified,
-        verificationStatus:
-            user.verificationStatus,
-        createdAt:
-            user.created_at.toISOString(),
+        verificationStatus: user.verificationStatus,
+        rejectionReason: user.rejectionReason ?? "",
+        image: user.image ?? "",
+        createdAt: user.created_at ? new Date(user.created_at).toISOString() : new Date().toISOString(),
     }));
+
+    return {
+        users: formatted,
+        pagination: {
+            page: query.page,
+            limit: query.limit,
+            total,
+            pages: Math.ceil(total / query.limit),
+        },
+    };
 };
+
+const adminGetUserDetails = async (userId: string) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    return {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        phone: user.phone ?? "",
+        role: user.role,
+        status: user.status,
+        isVerified: user.isVerified,
+        verificationStatus: user.verificationStatus,
+        rejectionReason: user.rejectionReason ?? "",
+        image: user.image ?? "",
+        locationName: user.locationName ?? "",
+        rentalTerms: user.rentalTerms ?? "",
+        createdAt: user.created_at.toISOString(),
+        updatedAt: user.updated_at.toISOString(),
+    };
+};
+
+const adminUpdateUser = async (userId: string, data: AdminUpdateUserInput) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    const role = data.role ? (data.role as UserRole) : undefined;
+    let status: UserStatus | undefined;
+    if (data.status) {
+        if (data.status === "blocked") {
+            status = UserStatus.SUSPENDED;
+            user.isBlock = true;
+            await user.save();
+        } else if (data.status === "suspended") {
+            status = UserStatus.SUSPENDED;
+        } else if (data.status === "inactive") {
+            status = UserStatus.INACTIVE;
+        } else if (data.status === "active") {
+            status = UserStatus.ACTIVE;
+            user.isBlock = false;
+            await user.save();
+        }
+    }
+
+    const updatePayload: Parameters<typeof authRepository.adminUpdateUser>[1] = {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.email !== undefined ? { email: data.email } : {}),
+        ...(data.phone !== undefined ? { phone: data.phone } : {}),
+        ...(role !== undefined ? { role } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(data.isVerified !== undefined ? { isVerified: data.isVerified } : {}),
+        ...(data.verificationStatus !== undefined ? { verificationStatus: data.verificationStatus } : {}),
+    };
+
+    const updated = await authRepository.adminUpdateUser(userId, updatePayload);
+    if (!updated) {
+        throw new AppError(500, "Failed to update user");
+    }
+
+    return {
+        id: updated._id.toString(),
+        name: updated.name,
+        email: updated.email,
+        phone: updated.phone ?? "",
+        role: updated.role,
+        status: updated.status,
+        isVerified: updated.isVerified,
+        verificationStatus: updated.verificationStatus,
+        createdAt: updated.created_at.toISOString(),
+    };
+};
+
+const adminDeleteUser = async (userId: string) => {
+    const user = await authRepository.findById(userId);
+    if (!user) {
+        throw new AppError(404, "User not found");
+    }
+
+    // Clean up profile image or private verification doc if present
+    if (user.idDocumentPublicId) {
+        await deleteIdDocument(user.idDocumentPublicId, user.idDocumentResourceType ?? "image").catch(() => {});
+    }
+
+    await authRepository.deleteUser(userId);
+    return { message: "User deleted successfully" };
+};
+
 
 // -----------------------------------------------------
 // PROFILE IMAGE
@@ -1313,6 +1447,8 @@ const approveOwnerVerification =
             referenceId: userId,
             referenceType: "user",
         });
+        // The owner's client refreshes its session to unlock owner features.
+        emitDashboardUpdate({ userIds: [userId], admins: true }, "user", "verification_changed", userId);
 
         // Send approval email if enabled.
         settingsRepository
@@ -1409,6 +1545,7 @@ const rejectOwnerVerification = async (
         referenceId: userId,
         referenceType: "user",
     });
+    emitDashboardUpdate({ userIds: [userId], admins: true }, "user", "verification_changed", userId);
 
     // Send rejection email.
     await sendOwnerRejectedEmail(
@@ -1445,6 +1582,9 @@ const authService = {
     suggestLocations,
     changePassword,
     listUsers,
+    adminGetUserDetails,
+    adminUpdateUser,
+    adminDeleteUser,
     uploadProfileImage,
     submitIdVerification,
     listPendingVerifications,

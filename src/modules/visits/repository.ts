@@ -44,6 +44,8 @@ const findByOwner = async (
     owner: string
 ): Promise<IVisit[]> => {
     return Visit.find({ owner })
+        .populate("property", "title price address images")
+        .populate("requester", "name email phone image")
         .sort({ created_at: -1 });
 };
 
@@ -56,17 +58,54 @@ const findByProperty = async (
 
 const update = async (
     id: string,
-    data: Partial<Pick<
-        IVisit,
-        | "status"
-        | "scheduledDate"
-        | "scheduledTime"
-        | "rejectionReason"
-        | "rescheduleReason"
-    >>
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
 ): Promise<IVisit | null> => {
     return Visit.findByIdAndUpdate(
         id,
+        { $set: data },
+        {
+            new: true,
+            runValidators: true,
+        }
+    );
+};
+
+/**
+ * Atomically updates a visit only when its current
+ * status is one of the allowed statuses.
+ *
+ * This prevents race conditions where two requests
+ * read the same status and both attempt to transition
+ * the visit.
+ */
+const updateIfStatus = async (
+    id: string,
+    allowedStatuses: VisitStatus[],
+    data: Partial<
+        Pick<
+            IVisit,
+            | "status"
+            | "scheduledDate"
+            | "scheduledTime"
+            | "rejectionReason"
+            | "rescheduleReason"
+        >
+    >
+): Promise<IVisit | null> => {
+    return Visit.findOneAndUpdate(
+        {
+            _id: id,
+            status: { $in: allowedStatuses },
+        },
         { $set: data },
         {
             new: true,
@@ -102,22 +141,48 @@ const findForAdmin = async (
         ? { status: options.status }
         : {};
 
-    const [visits, total] = await Promise.all([
+    const [rawVisits, total] = await Promise.all([
         Visit.find(filter)
-            .populate("property", "title address images")
-            .populate("requester", "name email image")
-            .populate("owner", "name email image")
+            .populate({
+                path: "property",
+                select: "title address images owner price",
+                populate: {
+                    path: "owner",
+                    select: "name email phone image",
+                },
+            })
+            .populate(
+                "requester",
+                "name email phone image"
+            )
+            .populate(
+                "owner",
+                "name email phone image"
+            )
             .sort({ updated_at: -1 })
             .skip(options.skip)
-            .limit(options.limit),
+            .limit(options.limit)
+            .lean(),
 
         Visit.countDocuments(filter),
     ]);
+
+    const visits = rawVisits.map((visit: any) => {
+        const owner = visit.owner || visit.property?.owner || null;
+        return {
+            ...visit,
+            owner,
+        };
+    });
 
     return {
         visits,
         total,
     };
+};
+
+const deleteById = async (id: string) => {
+    return Visit.findByIdAndDelete(id);
 };
 
 export default {
@@ -128,7 +193,9 @@ export default {
     findByOwner,
     findByProperty,
     update,
+    updateIfStatus,
     findByOwnerAndStatus,
     findByRequesterAndStatus,
     findForAdmin,
+    deleteById,
 };

@@ -1,14 +1,14 @@
-import type {Document ,Types} from 'mongoose';
+import type { Document, Types } from "mongoose";
 
 export type VisitStatus =
     | "pending"
-    | "accepted"
+    | "approved"
     | "rejected"
     | "rescheduled"
     | "cancelled"
     | "completed";
 
-    export interface IVisit extends Document {
+export interface IVisit extends Document {
     property: Types.ObjectId;
     requester: Types.ObjectId;
     owner: Types.ObjectId;

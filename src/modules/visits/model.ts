@@ -3,7 +3,7 @@ import type { IVisit, VisitStatus } from "./type.js";
 
 const visitStatuses: VisitStatus[] = [
     "pending",
-    "accepted",
+    "approved",
     "rejected",
     "rescheduled",
     "cancelled",
@@ -84,7 +84,7 @@ const visitSchema = new Schema<IVisit>(
             createdAt: "created_at",
             updatedAt: "updated_at",
         },
-    },
+    }
 );
 
 /**
@@ -114,6 +114,16 @@ visitSchema.index({
     created_at: -1,
 });
 
+
+visitSchema.index(
+    { requester: 1, property: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            status: "pending",
+        },
+    }
+);
 const Visit = mongoose.model<IVisit>("Visit", visitSchema);
 
 export default Visit;

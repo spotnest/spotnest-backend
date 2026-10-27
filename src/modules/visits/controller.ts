@@ -3,7 +3,7 @@ import type { AuthRequest } from "../../types/roleTypes.js";
 
 import visitService from "./service.js";
 import {
-    acceptVisitSchema,
+    approveVisitSchema,
     adminVisitQuerySchema,
     createVisitSchema,
     rejectVisitSchema,
@@ -106,7 +106,7 @@ export const getVisitById = async (
     }
 };
 
-export const acceptVisit = async (
+export const approveVisit = async (
     req: AuthRequest,
     res: Response,
     next: NextFunction
@@ -116,11 +116,11 @@ export const acceptVisit = async (
             req.params.id
         );
 
-        const data = acceptVisitSchema.parse(
+        const data = approveVisitSchema.parse(
             req.body
         );
 
-        const visit = await visitService.acceptVisit(
+        const visit = await visitService.approveVisit(
             req.user!.id,
             visitId,
             data
@@ -226,3 +226,17 @@ export const completeVisit = async (
         next(err);
     }
 };
+
+export const adminDeleteVisit = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const visitId = visitIdSchema.parse(req.params.id);
+        const result = await visitService.adminDeleteVisit(visitId);
+        res.status(200).json({ success: true, message: result.message });
+    } catch (err) {
+        next(err);
+    }
+};

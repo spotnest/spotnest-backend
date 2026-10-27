@@ -1,0 +1,29 @@
+name: Build and Deploy Backend to Azure App Service
+
+on:
+  push:
+    branches: [ "main" ] # അല്ലെങ്കിൽ നിങ്ങളുടെ ഡിഫോൾട്ട് ബ്രാഞ്ച് നാമം
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies and build
+        run: |
+          npm install
+          npm run build
+
+      - name: 'Deploy to Azure Web App'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'spotnest-backend-2026'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .

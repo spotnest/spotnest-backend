@@ -3,11 +3,28 @@ import { UserRole, UserStatus } from "../../auth/type.js";
 export interface DashboardOverview {
     totalUsers: number;
     totalOwners: number;
+    totalTenants: number;
+    totalRegularUsers: number;
+    blockedUsers: number;
     totalProperties: number;
     activeListings: number;
+    inactiveListings: number;
+    archivedListings: number;
+    /** Rental requests (bookings) waiting for an owner decision. */
     pendingRequests: number;
     pendingOwnerCount: number;
     pendingUserVerification: number;
+    activeRentals: number;
+    gracePeriodRentals: number;
+    overduePayments: number;
+    /** Sum of all PAID payments (INR). */
+    paymentsReceivedTotal: number;
+    paymentsReceivedCount: number;
+    lateFeesTotal: number;
+    totalMaintenance: number;
+    pendingMaintenance: number;
+    totalVisits: number;
+    pendingVisits: number;
 }
 
 export interface DashboardUser {
@@ -22,11 +39,11 @@ export interface DashboardUser {
 
 export interface DashboardActivity {
     id: string;
-    title: "New user registration";
+    title: string;
     detail: string;
     createdAt: string;
-    icon: "users";
-    tone: "teal";
+    icon: "users" | "home" | "chart" | "alert" | "inbox";
+    tone: "teal" | "warm" | "ink" | "red";
 }
 
 export interface DashboardProperty {
@@ -42,4 +59,4 @@ export interface AdminDashboardResponse {
     recentActivities: DashboardActivity[];
     recentUsers: DashboardUser[];
     recentProperties: DashboardProperty[];
-}
+}

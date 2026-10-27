@@ -1,7 +1,17 @@
 import { Document, Types } from "mongoose";
 
-export type PropertyType = "apartment" | "house" | "villa" | "studio" | "room";
-export type PropertyStatus = "active" | "inactive" | "archived";
+export type PropertyType =
+    | "apartment"
+    | "house"
+    | "villa"
+    | "studio"
+    | "room";
+
+export type PropertyStatus =
+    | "active"
+    | "inactive"
+    | "archived";
+
 export type PropertyRentalStatus = "available";
 
 export interface PropertyImage {
@@ -28,6 +38,11 @@ export interface IProperty extends Document {
     description: string;
     propertyType: PropertyType;
     price: number;
+    advanceAmount?: number;
+
+    // Owner-defined terms and conditions for this property.
+    rentalTerms: string;
+
     bedrooms: number;
     bathrooms: number;
     areaSqFt?: number;
@@ -49,6 +64,8 @@ export interface PublicPropertyOwner {
 
 export type PublicProperty = Omit<IProperty, "owner"> & {
     owner: PublicPropertyOwner | null;
+    isOccupied?: boolean;
+    occupiedUntil?: Date | string | null;
 };
 
 export interface AdminPropertyOwner {
@@ -57,11 +74,18 @@ export interface AdminPropertyOwner {
     email: string;
     phone?: string;
     isVerified: boolean;
-    verificationStatus?: "unsubmitted" | "pending" | "approved" | "rejected";
+    verificationStatus?:
+        | "unsubmitted"
+        | "pending"
+        | "approved"
+        | "rejected";
     status: "active" | "inactive" | "suspended";
 }
 
-export type AdminProperty = Omit<IProperty, "owner" | "price"> & {
+export type AdminProperty = Omit<
+    IProperty,
+    "owner" | "price"
+> & {
     owner: AdminPropertyOwner | null;
     price: number | null;
     rentalStatus: PropertyRentalStatus;

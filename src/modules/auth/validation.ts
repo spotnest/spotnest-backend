@@ -65,6 +65,36 @@ export type SuggestLocationInput = z.infer<typeof suggestLocationSchema>;
 export const rejectVerificationSchema = z.object({
     reason: z.string().min(1, "Rejection reason is required").max(500),
 });
+export const updateOwnerRentalTermsSchema = z.object({
+    terms: z
+        .string()
+        .trim()
+        .min(20, "Rental terms must contain at least 20 characters")
+        .max(10000, "Rental terms cannot exceed 10000 characters"),
+});
+
+export const adminUpdateUserSchema = z.object({
+    name: z.string().min(2).max(100).optional(),
+    email: z.string().email().max(150).optional(),
+    phone: z.string().min(10).max(20).or(z.literal("")).optional(),
+    role: z.enum(["user", "owner", "tenant", "admin"]).optional(),
+    status: z.enum(["active", "inactive", "suspended", "blocked"]).optional(),
+    isVerified: z.boolean().optional(),
+    verificationStatus: z.enum(["unsubmitted", "pending", "approved", "rejected"]).optional(),
+});
+export type AdminUpdateUserInput = z.infer<typeof adminUpdateUserSchema>;
+
+export const adminListUsersQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    role: z.enum(["user", "owner", "tenant", "admin"]).optional(),
+    status: z.enum(["active", "inactive", "suspended", "blocked"]).optional(),
+    verificationStatus: z.enum(["unsubmitted", "pending", "approved", "rejected"]).optional(),
+    search: z.string().optional(),
+});
+export type AdminListUsersQuery = z.infer<typeof adminListUsersQuerySchema>;
+
+export type UpdateOwnerRentalTermsInput = z.infer< typeof updateOwnerRentalTermsSchema>;
 export type RejectVerificationInput = z.infer<typeof rejectVerificationSchema>
 
 export type SignupInput = z.infer<typeof signupSchema>;
@@ -76,3 +106,4 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+

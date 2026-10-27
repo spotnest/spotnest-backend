@@ -63,6 +63,13 @@ router.get(
     visitController.getAdminVisits
 );
 
+router.delete(
+    "/admin/:id",
+    protect,
+    requireRole(UserRole.ADMIN),
+    visitController.adminDeleteVisit
+);
+
 /**
  * =========================
  * SINGLE VISIT
@@ -82,10 +89,10 @@ router.get(
  */
 
 router.patch(
-    "/:id/accept",
+    "/:id/approve",
     protect,
     requireVerifiedOwner,
-    visitController.acceptVisit
+    visitController.approveVisit
 );
 
 router.patch(
